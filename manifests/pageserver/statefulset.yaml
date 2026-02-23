@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pageserver-sa
+  namespace: neon
+  labels:
+    app: pageserver
+  # The IRSA annotation is patched in by 04-deploy-neon.sh after reading .env
+  # annotations:
+  #   eks.amazonaws.com/role-arn: <set-by-deploy-script>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pageserver-config
+  namespace: neon
+data:
+  pageserver.toml: |
+    listen_pg_addr = "0.0.0.0:6400"
+    listen_http_addr = "0.0.0.0:9898"
+    broker_endpoint = "http://storage-broker.neon.svc.cluster.local:50051"
+    page_cache_size = 1073741824
+    max_file_descriptors = 500000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pageserver
+  namespace: neon
+  labels:
+    app: pageserver
+    app.kubernetes.io/part-of: neon
+spec:
+  serviceName: pageserver
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: pageserver
+  template:
+    metadata:
+      labels:
+        app: pageserver
+    spec:
+      serviceAccountName: pageserver-sa
+      containers:
+        - name: pageserver
+          image: PLACEHOLDER_ECR_REGISTRY/neon/pageserver:latest
+          ports:
+            - containerPort: 6400
+              name: pg
+            - containerPort: 9898
+              name: http
+          args:
+            - "-D"
+            - "/data"
+            - "-c"
+            - "broker_endpoint=http://storage-broker.neon.svc.cluster.local:50051"
+            - "-c"
+            - "listen_pg_addr=0.0.0.0:6400"
+            - "-c"
+            - "listen_http_addr=0.0.0.0:9898"
+            - "-c"
+            - "page_cache_size=1073741824"
+          env:
+            - name: NEON_REMOTE_STORAGE_S3_BUCKET
+              value: "PLACEHOLDER_S3_BUCKET"
+            - name: NEON_REMOTE_STORAGE_S3_REGION
+              value: "us-west-2"
+            - name: AWS_DEFAULT_REGION
+              value: "us-west-2"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/pageserver
+              readOnly: true
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          readinessProbe:
+            httpGet:
+              path: /v1/status
+              port: 9898
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/status
+              port: 9898
+            initialDelaySeconds: 20
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: pageserver-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3-encrypted
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pageserver
+  namespace: neon
+  labels:
+    app: pageserver
+spec:
+  selector:
+    app: pageserver
+  ports:
+    - port: 6400
+      targetPort: 6400
+      name: pg
+    - port: 9898
+      targetPort: 9898
+      name: http
+  clusterIP: None

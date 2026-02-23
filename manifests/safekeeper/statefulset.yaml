@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: safekeeper
+  namespace: neon
+  labels:
+    app: safekeeper
+    app.kubernetes.io/part-of: neon
+spec:
+  serviceName: safekeeper
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: safekeeper
+  template:
+    metadata:
+      labels:
+        app: safekeeper
+    spec:
+      containers:
+        - name: safekeeper
+          image: PLACEHOLDER_ECR_REGISTRY/neon/safekeeper:latest
+          ports:
+            - containerPort: 5454
+              name: pg
+            - containerPort: 7676
+              name: http
+          args:
+            - "-D"
+            - "/data"
+            - "--listen-pg"
+            - "0.0.0.0:5454"
+            - "--listen-http"
+            - "0.0.0.0:7676"
+            - "--broker-endpoint"
+            - "http://storage-broker.neon.svc.cluster.local:50051"
+            - "--advertise-pg"
+            - "$(POD_NAME).safekeeper.neon.svc.cluster.local:5454"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /v1/status
+              port: 7676
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/status
+              port: 7676
+            initialDelaySeconds: 15
+            periodSeconds: 30
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3-encrypted
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: safekeeper
+  namespace: neon
+  labels:
+    app: safekeeper
+spec:
+  selector:
+    app: safekeeper
+  ports:
+    - port: 5454
+      targetPort: 5454
+      name: pg
+    - port: 7676
+      targetPort: 7676
+      name: http
+  clusterIP: None

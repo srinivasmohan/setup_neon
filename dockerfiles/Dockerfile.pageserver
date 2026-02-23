@@ -1,0 +1,26 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libreadline8 \
+    libssl3 \
+    libicu72 \
+    libxml2 \
+    libxslt1.1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r neon && useradd -r -g neon -d /data neon
+
+COPY .docker-staging/pageserver /usr/local/bin/pageserver
+RUN chmod +x /usr/local/bin/pageserver
+
+RUN mkdir -p /data && chown neon:neon /data
+VOLUME /data
+
+USER neon
+WORKDIR /data
+
+EXPOSE 6400 9898
+
+ENTRYPOINT ["pageserver"]
+CMD ["-D", "/data", "-c", "broker_endpoint=http://storage-broker.neon.svc.cluster.local:50051"]

@@ -1,0 +1,23 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libreadline8 \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r neon && useradd -r -g neon -d /data neon
+
+COPY .docker-staging/safekeeper /usr/local/bin/safekeeper
+RUN chmod +x /usr/local/bin/safekeeper
+
+RUN mkdir -p /data && chown neon:neon /data
+VOLUME /data
+
+USER neon
+WORKDIR /data
+
+EXPOSE 5454 7676
+
+ENTRYPOINT ["safekeeper"]
+CMD ["-D", "/data", "--listen-pg", "0.0.0.0:5454", "--listen-http", "0.0.0.0:7676", "--broker-endpoint", "http://storage-broker.neon.svc.cluster.local:50051"]

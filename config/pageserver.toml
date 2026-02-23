@@ -1,0 +1,30 @@
+# Neon Pageserver Configuration
+# This file is mounted as a ConfigMap in Kubernetes
+
+listen_pg_addr = "0.0.0.0:6400"
+listen_http_addr = "0.0.0.0:9898"
+
+# Broker endpoint for safekeeper coordination
+broker_endpoint = "http://storage-broker.neon.svc.cluster.local:50051"
+
+# Availability zone (overridden per pod via env var if needed)
+# availability_zone = "us-west-2a"
+
+# Page cache size in bytes (8GB)
+page_cache_size = 8589934592
+
+# Max file descriptors for layer files
+max_file_descriptors = 500000
+
+[remote_storage]
+# S3 backend configuration
+# bucket_name and bucket_region are set via environment variables:
+#   NEON_REMOTE_STORAGE_S3_BUCKET
+#   NEON_REMOTE_STORAGE_S3_REGION
+# IRSA provides credentials automatically (no access keys needed)
+
+[remote_storage.s3]
+# Placeholder values — overridden by env vars at runtime
+bucket_name = "PLACEHOLDER"
+bucket_region = "us-west-2"
+prefix_in_bucket = "pageserver/"
