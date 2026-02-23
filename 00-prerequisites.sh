@@ -34,6 +34,7 @@ sudo dnf install -y \
     libicu-devel \
     systemd-devel \
     clang-devel \
+    libcurl-devel \
     libseccomp-devel \
     pkg-config \
     protobuf-compiler \
