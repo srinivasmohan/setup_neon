@@ -1,9 +1,8 @@
-FROM debian:bookworm-slim
+FROM fedora:43
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+RUN dnf install -y --setopt=install_weak_deps=False \
+    ca-certificates openssl-libs \
+    && dnf clean all
 
 RUN groupadd -r neon && useradd -r -g neon neon
 

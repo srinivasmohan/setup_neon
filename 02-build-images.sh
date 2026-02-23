@@ -48,9 +48,6 @@ for component in "${!IMAGES[@]}"; do
     log "  ${TAG} built."
 done
 
-# ── Cleanup staging ──────────────────────────────────────────────────────────
-rm -rf "${STAGING}"
-
 # ── Summary ───────────────────────────────────────────────────────────────────
 log ""
 log "All images built locally:"
