@@ -19,10 +19,11 @@ echo "================================"
 echo ""
 echo "This script will:"
 echo "  1. Install prerequisites (Fedora packages, Rust, Docker, AWS CLI, kubectl, eksctl)"
-echo "  2. Clone and build Neon from source (~20-30 min)"
-echo "  3. Create AWS infrastructure (EKS, S3, IAM, ECR — ~15-20 min)"
-echo "  4. Build and push Docker images to ECR"
-echo "  5. Deploy Neon to EKS"
+echo "  2. Build Neon from source"
+echo "  3. Build Docker images locally"
+echo "  4. Create AWS infrastructure (EKS, S3, IAM, ECR)"
+echo "  5. Push Docker images to ECR"
+echo "  6. Deploy Neon to EKS"
 echo ""
 echo "Region:  ${AWS_DEFAULT_REGION}"
 echo "Prefix:  smohan-neon1"
@@ -46,20 +47,23 @@ chmod +x "${SCRIPT_DIR}"/0*.sh "${SCRIPT_DIR}"/99-teardown.sh 2>/dev/null || tru
 # ── Run each phase ────────────────────────────────────────────────────────────
 SECONDS=0
 
-log "Phase 0/4: Prerequisites"
+log "Phase 0/5: Prerequisites"
 "${SCRIPT_DIR}/00-prerequisites.sh"
 
-log "Phase 1/4: Building Neon"
+log "Phase 1/5: Building Neon"
 "${SCRIPT_DIR}/01-build-neon.sh"
 
-log "Phase 2/4: Creating AWS Infrastructure"
-"${SCRIPT_DIR}/02-create-aws-infra.sh"
+log "Phase 2/5: Building Docker Images"
+"${SCRIPT_DIR}/02-build-images.sh"
 
-log "Phase 3/4: Building & Pushing Docker Images"
-"${SCRIPT_DIR}/03-build-push-images.sh"
+log "Phase 3/5: Creating AWS Infrastructure"
+"${SCRIPT_DIR}/03-create-aws-infra.sh"
 
-log "Phase 4/4: Deploying to EKS"
-"${SCRIPT_DIR}/04-deploy-neon.sh"
+log "Phase 4/5: Pushing Docker Images to ECR"
+"${SCRIPT_DIR}/04-push-images.sh"
+
+log "Phase 5/5: Deploying to EKS"
+"${SCRIPT_DIR}/05-deploy-neon.sh"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 ELAPSED=$((SECONDS / 60))
@@ -68,10 +72,8 @@ echo "========================================"
 echo "  Deployment complete! (${ELAPSED} minutes)"
 echo "========================================"
 echo ""
-echo "Next steps:"
-echo "  kubectl get pods -n neon"
-echo "  kubectl port-forward -n neon svc/pageserver 9898:9898"
-echo "  curl http://localhost:9898/v1/status"
+echo "Verifying deployment..."
+kubectl get pods -n neon
 echo ""
 echo "To tear down everything:"
 echo "  ./99-teardown.sh"
