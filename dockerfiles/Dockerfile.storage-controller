@@ -1,0 +1,17 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r neon && useradd -r -g neon neon
+
+COPY .docker-staging/storage_controller /usr/local/bin/storage_controller
+RUN chmod +x /usr/local/bin/storage_controller
+
+USER neon
+
+EXPOSE 6060 9898
+
+ENTRYPOINT ["storage_controller"]

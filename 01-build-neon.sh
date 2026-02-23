@@ -23,7 +23,7 @@ export CARGO_INCREMENTAL=0
 # avoids linker OOM/segfault on machines with ≤16GB RAM.
 if command -v mold &>/dev/null; then
     log "Using mold linker"
-    export RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }-Cforce-frame-pointers=yes -Clink-arg=-fuse-ld=mold"
+    export RUSTFLAGS="-Cforce-frame-pointers=yes -Clink-arg=-fuse-ld=mold"
 else
     log "Warning: mold not found — large binaries may fail to link on low-memory machines."
     log "  Install with: sudo dnf install -y mold"
@@ -87,6 +87,14 @@ if [[ ! -f "${WALPROP_DIR}/libwalproposer.a" ]]; then
     log "walproposer-lib ready"
 else
     log "walproposer-lib already built"
+fi
+
+# ── Build neon-pg-ext-v17 (postgres extensions for compute nodes) ─────────────
+if [[ ! -f "${NEON_DIR}/pg_install/v17/lib/neon.so" ]]; then
+    log "Building neon-pg-ext-v17..."
+    make neon-pg-ext-v17 -j1
+else
+    log "neon-pg-ext-v17 already built"
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
