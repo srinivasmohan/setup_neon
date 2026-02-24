@@ -35,9 +35,9 @@ managedNodeGroups:
 addons:
   - name: vpc-cni
     attachPolicyARNs:
-      - arn:aws:iam::policy/AmazonEKS_CNI_Policy
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
   - name: coredns
   - name: kube-proxy
   - name: aws-ebs-csi-driver
     attachPolicyARNs:
-      - arn:aws:iam::policy/service-role/AmazonEBSCSIDriverPolicy
+      - arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
