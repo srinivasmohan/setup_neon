@@ -4,7 +4,10 @@ kind: ClusterConfig
 metadata:
   name: smohan-neon1-cluster
   region: us-west-2
-  version: "1.28"
+  version: "1.32"
+
+vpc:
+  cidr: "172.16.0.0/16"
 
 iam:
   withOIDC: true
