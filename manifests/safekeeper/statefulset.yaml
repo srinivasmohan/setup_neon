@@ -18,6 +18,8 @@ spec:
       labels:
         app: safekeeper
     spec:
+      securityContext:
+        fsGroup: 999
       containers:
         - name: safekeeper
           image: PLACEHOLDER_ECR_REGISTRY/neon/safekeeper:latest

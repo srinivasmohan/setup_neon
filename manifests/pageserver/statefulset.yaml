@@ -43,6 +43,8 @@ spec:
         app: pageserver
     spec:
       serviceAccountName: pageserver-sa
+      securityContext:
+        fsGroup: 999
       containers:
         - name: pageserver
           image: PLACEHOLDER_ECR_REGISTRY/neon/pageserver:latest
