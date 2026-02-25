@@ -194,17 +194,15 @@ spec:
           cpu: "1"
           memory: "1Gi"
       readinessProbe:
-        httpGet:
-          path: /status
-          port: 3081
+        tcpSocket:
+          port: 5432
         initialDelaySeconds: 5
         periodSeconds: 10
       livenessProbe:
-        httpGet:
-          path: /status
-          port: 3081
+        tcpSocket:
+          port: 5432
         initialDelaySeconds: 15
-        periodSeconds: 20
+        periodSeconds: 30
   volumes:
     - name: compute-spec
       configMap:
