@@ -2,6 +2,15 @@
 # 06-spin-compute.sh — Create a tenant + timeline on pageserver, then deploy a
 # compute pod (Postgres) connected to the Neon storage layer.
 # Run after 05-deploy-neon.sh has the data plane running.
+#
+# Usage:
+#   ./06-spin-compute.sh                              # New tenant + timeline
+#   ./06-spin-compute.sh --branch TENANT_ID TIMELINE_ID [LSN]  # Branch from existing
+#
+# Examples:
+#   ./06-spin-compute.sh
+#   ./06-spin-compute.sh --branch abc123...def 789012...345
+#   ./06-spin-compute.sh --branch abc123...def 789012...345 0/1568000
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,6 +19,22 @@ ENV_FILE="${SCRIPT_DIR}/.env"
 log()  { echo "==> [compute] $*"; }
 warn() { echo "==> [compute] WARNING: $*" >&2; }
 die()  { echo "==> [compute] FATAL: $*" >&2; exit 1; }
+
+# ── Parse arguments ────────────────────────────────────────────────────────────
+BRANCH_MODE=false
+PARENT_TENANT_ID=""
+PARENT_TIMELINE_ID=""
+BRANCH_LSN=""
+
+if [[ "${1:-}" == "--branch" ]]; then
+    BRANCH_MODE=true
+    shift
+    PARENT_TENANT_ID="${1:-}"
+    PARENT_TIMELINE_ID="${2:-}"
+    BRANCH_LSN="${3:-}"  # optional — omit to branch at latest LSN
+    [[ -n "${PARENT_TENANT_ID}" ]]  || die "Usage: $0 --branch TENANT_ID TIMELINE_ID [LSN]"
+    [[ -n "${PARENT_TIMELINE_ID}" ]] || die "Usage: $0 --branch TENANT_ID TIMELINE_ID [LSN]"
+fi
 
 # ── Load .env ─────────────────────────────────────────────────────────────────
 [[ -f "${ENV_FILE}" ]] || die ".env file not found. Run 03-create-aws-infra.sh first."
@@ -38,36 +63,65 @@ for app in storage-broker safekeeper pageserver; do
 done
 log "Data plane is healthy."
 
-# ── Generate tenant and timeline IDs ─────────────────────────────────────────
-# Neon uses 32-char hex strings (128-bit) for tenant and timeline IDs.
+# ── Generate IDs ───────────────────────────────────────────────────────────────
 gen_id() { python3 -c "import uuid; print(uuid.uuid4().hex)"; }
 
-TENANT_ID=$(gen_id)
 TIMELINE_ID=$(gen_id)
-COMPUTE_ID="compute-${TENANT_ID:0:8}"
 
-log "Tenant ID:   ${TENANT_ID}"
-log "Timeline ID: ${TIMELINE_ID}"
-log "Compute ID:  ${COMPUTE_ID}"
+if [[ "${BRANCH_MODE}" == true ]]; then
+    # Branch: reuse parent tenant, create child timeline
+    TENANT_ID="${PARENT_TENANT_ID}"
+    COMPUTE_ID="compute-${TIMELINE_ID:0:8}"
 
-# ── Create tenant on pageserver ──────────────────────────────────────────────
-# Uses location_config API (the newer pageserver API for tenant management)
-log "Creating tenant on pageserver-0..."
-TENANT_RESULT=$(kubectl exec -n neon pageserver-0 -- \
-    curl -sf -X PUT "http://localhost:9898/v1/tenant/${TENANT_ID}/location_config" \
-        -H "Content-Type: application/json" \
-        -d '{"mode": "AttachedSingle", "generation": 1, "tenant_conf": {}}' 2>&1) \
-    || die "Failed to create tenant: ${TENANT_RESULT}"
-log "Tenant created: ${TENANT_RESULT}"
+    log "Mode:        branch"
+    log "Tenant ID:   ${TENANT_ID} (existing)"
+    log "Parent TL:   ${PARENT_TIMELINE_ID}"
+    log "Branch TL:   ${TIMELINE_ID}"
+    [[ -n "${BRANCH_LSN}" ]] && log "Branch LSN:  ${BRANCH_LSN}" || log "Branch LSN:  (latest)"
+    log "Compute ID:  ${COMPUTE_ID}"
 
-# ── Create timeline on pageserver ────────────────────────────────────────────
-log "Creating timeline on pageserver-0..."
-TIMELINE_RESULT=$(kubectl exec -n neon pageserver-0 -- \
-    curl -sf -X POST "http://localhost:9898/v1/tenant/${TENANT_ID}/timeline" \
-        -H "Content-Type: application/json" \
-        -d "{\"new_timeline_id\": \"${TIMELINE_ID}\", \"pg_version\": 17}" 2>&1) \
-    || die "Failed to create timeline: ${TIMELINE_RESULT}"
-log "Timeline created: ${TIMELINE_RESULT}"
+    # Build timeline creation payload with ancestor
+    TIMELINE_BODY="{\"new_timeline_id\": \"${TIMELINE_ID}\", \"ancestor_timeline_id\": \"${PARENT_TIMELINE_ID}\", \"pg_version\": 17"
+    if [[ -n "${BRANCH_LSN}" ]]; then
+        TIMELINE_BODY="${TIMELINE_BODY}, \"ancestor_start_lsn\": \"${BRANCH_LSN}\""
+    fi
+    TIMELINE_BODY="${TIMELINE_BODY}}"
+
+    log "Creating branch timeline on pageserver-0..."
+    TIMELINE_RESULT=$(kubectl exec -n neon pageserver-0 -- \
+        curl -sf -X POST "http://localhost:9898/v1/tenant/${TENANT_ID}/timeline" \
+            -H "Content-Type: application/json" \
+            -d "${TIMELINE_BODY}" 2>&1) \
+        || die "Failed to create branch timeline: ${TIMELINE_RESULT}"
+    log "Branch timeline created: $(echo "${TIMELINE_RESULT}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'timeline_id={d[\"timeline_id\"]}, ancestor={d.get(\"ancestor_timeline_id\",\"none\")}, lsn={d[\"last_record_lsn\"]}')" 2>/dev/null || echo "${TIMELINE_RESULT}")"
+else
+    # Default: new tenant + timeline
+    TENANT_ID=$(gen_id)
+    COMPUTE_ID="compute-${TENANT_ID:0:8}"
+
+    log "Mode:        new tenant"
+    log "Tenant ID:   ${TENANT_ID}"
+    log "Timeline ID: ${TIMELINE_ID}"
+    log "Compute ID:  ${COMPUTE_ID}"
+
+    # Create tenant via location_config API
+    log "Creating tenant on pageserver-0..."
+    TENANT_RESULT=$(kubectl exec -n neon pageserver-0 -- \
+        curl -sf -X PUT "http://localhost:9898/v1/tenant/${TENANT_ID}/location_config" \
+            -H "Content-Type: application/json" \
+            -d '{"mode": "AttachedSingle", "generation": 1, "tenant_conf": {}}' 2>&1) \
+        || die "Failed to create tenant: ${TENANT_RESULT}"
+    log "Tenant created: ${TENANT_RESULT}"
+
+    # Create root timeline
+    log "Creating timeline on pageserver-0..."
+    TIMELINE_RESULT=$(kubectl exec -n neon pageserver-0 -- \
+        curl -sf -X POST "http://localhost:9898/v1/tenant/${TENANT_ID}/timeline" \
+            -H "Content-Type: application/json" \
+            -d "{\"new_timeline_id\": \"${TIMELINE_ID}\", \"pg_version\": 17}" 2>&1) \
+        || die "Failed to create timeline: ${TIMELINE_RESULT}"
+    log "Timeline created."
+fi
 
 # ── Internal DNS names ───────────────────────────────────────────────────────
 PAGESERVER_HOST="pageserver-0.pageserver.neon.svc.cluster.local"
@@ -78,7 +132,6 @@ SPEC_JSON=$(cat <<EOF
 {
   "spec": {
     "format_version": 1.0,
-    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)",
     "operation_uuid": "$(gen_id)",
     "cluster": {
       "cluster_id": "${COMPUTE_ID}",
@@ -238,8 +291,8 @@ kubectl wait --for=condition=Ready pod/"${COMPUTE_ID}" -n neon --timeout=120s \
     || warn "Pod did not become Ready within 120s. Check: kubectl describe pod ${COMPUTE_ID} -n neon"
 
 # ── Assign a unique local port for port-forwarding ───────────────────────────
-# Derive from tenant ID hex to get a port in range 5500-5999
-LOCAL_PORT=$(( 5500 + ( 16#${TENANT_ID:0:4} % 500 ) ))
+# Derive from timeline ID hex to get a port in range 5500-5999
+LOCAL_PORT=$(( 5500 + ( 16#${TIMELINE_ID:0:4} % 500 ) ))
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 log ""
@@ -247,14 +300,26 @@ log "Compute node deployed:"
 log "  Pod:         ${COMPUTE_ID}"
 log "  Tenant ID:   ${TENANT_ID}"
 log "  Timeline ID: ${TIMELINE_ID}"
+if [[ "${BRANCH_MODE}" == true ]]; then
+    log "  Parent TL:   ${PARENT_TIMELINE_ID}"
+    [[ -n "${BRANCH_LSN}" ]] && log "  Branch LSN:  ${BRANCH_LSN}"
+fi
 log "  Service:     ${COMPUTE_ID}.neon.svc.cluster.local:5432"
 log ""
 log "Connect from your machine:"
 log "  kubectl port-forward -n neon pod/${COMPUTE_ID} ${LOCAL_PORT}:5432"
-log "  psql postgresql://postgres@localhost:${LOCAL_PORT}/postgres"
+log "  psql postgresql://cloud_admin@localhost:${LOCAL_PORT}/postgres"
 log ""
 log "Or connect from within the cluster:"
-log "  psql postgresql://postgres@${COMPUTE_ID}.neon.svc.cluster.local:5432/postgres"
+log "  psql postgresql://cloud_admin@${COMPUTE_ID}.neon.svc.cluster.local:5432/postgres"
+log ""
+if [[ "${BRANCH_MODE}" == true ]]; then
+    log "Branch from this timeline:"
+    log "  $0 --branch ${TENANT_ID} ${TIMELINE_ID}"
+else
+    log "Branch from this timeline:"
+    log "  $0 --branch ${TENANT_ID} ${TIMELINE_ID}"
+fi
 log ""
 log "Logs:"
 log "  kubectl logs -f ${COMPUTE_ID} -n neon"
