@@ -76,57 +76,59 @@ SAFEKEEPERS="safekeeper-0.safekeeper.neon.svc.cluster.local:5454,safekeeper-1.sa
 # ── Generate compute spec JSON ───────────────────────────────────────────────
 SPEC_JSON=$(cat <<EOF
 {
-  "format_version": 1.0,
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)",
-  "operation_uuid": "$(gen_id)",
-  "cluster": {
-    "cluster_id": "${COMPUTE_ID}",
-    "name": "${COMPUTE_ID}",
-    "roles": [
-      {
-        "name": "postgres",
-        "encrypted_password": null,
-        "options": null
-      }
+  "spec": {
+    "format_version": 1.0,
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)",
+    "operation_uuid": "$(gen_id)",
+    "cluster": {
+      "cluster_id": "${COMPUTE_ID}",
+      "name": "${COMPUTE_ID}",
+      "roles": [
+        {
+          "name": "postgres",
+          "encrypted_password": null,
+          "options": null
+        }
+      ],
+      "databases": [
+        {
+          "name": "postgres",
+          "owner": "postgres"
+        }
+      ],
+      "settings": [
+        {"name": "port", "value": "5432", "vartype": "integer"},
+        {"name": "listen_addresses", "value": "0.0.0.0", "vartype": "string"},
+        {"name": "max_connections", "value": "100", "vartype": "integer"},
+        {"name": "shared_buffers", "value": "131072", "vartype": "integer"},
+        {"name": "fsync", "value": "off", "vartype": "bool"},
+        {"name": "wal_level", "value": "logical", "vartype": "enum"},
+        {"name": "hot_standby", "value": "on", "vartype": "bool"},
+        {"name": "shared_preload_libraries", "value": "neon", "vartype": "string"},
+        {"name": "synchronous_standby_names", "value": "walproposer", "vartype": "string"},
+        {"name": "neon.tenant_id", "value": "${TENANT_ID}", "vartype": "string"},
+        {"name": "neon.timeline_id", "value": "${TIMELINE_ID}", "vartype": "string"},
+        {"name": "neon.pageserver_connstring", "value": "host=${PAGESERVER_HOST} port=6400", "vartype": "string"},
+        {"name": "neon.safekeepers", "value": "${SAFEKEEPERS}", "vartype": "string"},
+        {"name": "max_wal_senders", "value": "10", "vartype": "integer"},
+        {"name": "max_replication_slots", "value": "10", "vartype": "integer"},
+        {"name": "wal_sender_timeout", "value": "0", "vartype": "integer"},
+        {"name": "password_encryption", "value": "md5", "vartype": "enum"},
+        {"name": "log_connections", "value": "on", "vartype": "bool"}
+      ]
+    },
+    "delta_operations": [],
+    "tenant_id": "${TENANT_ID}",
+    "timeline_id": "${TIMELINE_ID}",
+    "pageserver_connstring": "host=${PAGESERVER_HOST} port=6400",
+    "safekeeper_connstrings": [
+      "safekeeper-0.safekeeper.neon.svc.cluster.local:5454",
+      "safekeeper-1.safekeeper.neon.svc.cluster.local:5454",
+      "safekeeper-2.safekeeper.neon.svc.cluster.local:5454"
     ],
-    "databases": [
-      {
-        "name": "postgres",
-        "owner": "postgres"
-      }
-    ],
-    "settings": [
-      {"name": "port", "value": "5432", "vartype": "integer"},
-      {"name": "listen_addresses", "value": "0.0.0.0", "vartype": "string"},
-      {"name": "max_connections", "value": "100", "vartype": "integer"},
-      {"name": "shared_buffers", "value": "131072", "vartype": "integer"},
-      {"name": "fsync", "value": "off", "vartype": "bool"},
-      {"name": "wal_level", "value": "logical", "vartype": "enum"},
-      {"name": "hot_standby", "value": "on", "vartype": "bool"},
-      {"name": "shared_preload_libraries", "value": "neon", "vartype": "string"},
-      {"name": "synchronous_standby_names", "value": "walproposer", "vartype": "string"},
-      {"name": "neon.tenant_id", "value": "${TENANT_ID}", "vartype": "string"},
-      {"name": "neon.timeline_id", "value": "${TIMELINE_ID}", "vartype": "string"},
-      {"name": "neon.pageserver_connstring", "value": "host=${PAGESERVER_HOST} port=6400", "vartype": "string"},
-      {"name": "neon.safekeepers", "value": "${SAFEKEEPERS}", "vartype": "string"},
-      {"name": "max_wal_senders", "value": "10", "vartype": "integer"},
-      {"name": "max_replication_slots", "value": "10", "vartype": "integer"},
-      {"name": "wal_sender_timeout", "value": "0", "vartype": "integer"},
-      {"name": "password_encryption", "value": "md5", "vartype": "enum"},
-      {"name": "log_connections", "value": "on", "vartype": "bool"}
-    ]
+    "mode": "Primary",
+    "skip_pg_catalog_updates": false
   },
-  "delta_operations": [],
-  "tenant_id": "${TENANT_ID}",
-  "timeline_id": "${TIMELINE_ID}",
-  "pageserver_connstring": "host=${PAGESERVER_HOST} port=6400",
-  "safekeeper_connstrings": [
-    "safekeeper-0.safekeeper.neon.svc.cluster.local:5454",
-    "safekeeper-1.safekeeper.neon.svc.cluster.local:5454",
-    "safekeeper-2.safekeeper.neon.svc.cluster.local:5454"
-  ],
-  "mode": "Primary",
-  "skip_pg_catalog_updates": false,
   "compute_ctl_config": {
     "jwks": {"keys": []}
   }
@@ -188,13 +190,13 @@ spec:
       readinessProbe:
         httpGet:
           path: /status
-          port: 3080
+          port: 3081
         initialDelaySeconds: 5
         periodSeconds: 10
       livenessProbe:
         httpGet:
           path: /status
-          port: 3080
+          port: 3081
         initialDelaySeconds: 15
         periodSeconds: 20
   volumes:
