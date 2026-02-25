@@ -9,6 +9,9 @@ RUN groupadd -r neon && useradd -r -g neon -d /data neon
 COPY .docker-staging/pageserver /usr/local/bin/pageserver
 RUN chmod +x /usr/local/bin/pageserver
 
+# PostgreSQL binaries (initdb, etc.) needed for timeline creation
+COPY .docker-staging/pg_install /usr/local/pgsql/v17
+
 RUN mkdir -p /data && chown neon:neon /data
 VOLUME /data
 

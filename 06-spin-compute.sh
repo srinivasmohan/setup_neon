@@ -51,11 +51,12 @@ log "Timeline ID: ${TIMELINE_ID}"
 log "Compute ID:  ${COMPUTE_ID}"
 
 # ── Create tenant on pageserver ──────────────────────────────────────────────
+# Uses location_config API (the newer pageserver API for tenant management)
 log "Creating tenant on pageserver-0..."
 TENANT_RESULT=$(kubectl exec -n neon pageserver-0 -- \
-    curl -sf -X POST http://localhost:9898/v1/tenant \
+    curl -sf -X PUT "http://localhost:9898/v1/tenant/${TENANT_ID}/location_config" \
         -H "Content-Type: application/json" \
-        -d "{\"new_tenant_id\": \"${TENANT_ID}\"}" 2>&1) \
+        -d '{"mode": "AttachedSingle", "generation": 1, "tenant_conf": {}}' 2>&1) \
     || die "Failed to create tenant: ${TENANT_RESULT}"
 log "Tenant created: ${TENANT_RESULT}"
 

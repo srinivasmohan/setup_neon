@@ -66,4 +66,6 @@ spec:
     - port: 7000
       targetPort: 7000
       name: http
-  type: LoadBalancer
+  # Changed to ClusterIP — no external access needed for now.
+  # Switch to LoadBalancer when external routing via proxy is required.
+  type: ClusterIP
