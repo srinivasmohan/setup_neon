@@ -227,6 +227,10 @@ log "Waiting for compute pod to start..."
 kubectl wait --for=condition=Ready pod/"${COMPUTE_ID}" -n neon --timeout=120s \
     || warn "Pod did not become Ready within 120s. Check: kubectl describe pod ${COMPUTE_ID} -n neon"
 
+# ── Assign a unique local port for port-forwarding ───────────────────────────
+# Derive from tenant ID hex to get a port in range 5500-5999
+LOCAL_PORT=$(( 5500 + ( 16#${TENANT_ID:0:4} % 500 ) ))
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 log ""
 log "Compute node deployed:"
@@ -236,8 +240,8 @@ log "  Timeline ID: ${TIMELINE_ID}"
 log "  Service:     ${COMPUTE_ID}.neon.svc.cluster.local:5432"
 log ""
 log "Connect from your machine:"
-log "  kubectl port-forward -n neon pod/${COMPUTE_ID} 5432:5432"
-log "  psql postgresql://postgres@localhost:5432/postgres"
+log "  kubectl port-forward -n neon pod/${COMPUTE_ID} ${LOCAL_PORT}:5432"
+log "  psql postgresql://postgres@localhost:${LOCAL_PORT}/postgres"
 log ""
 log "Or connect from within the cluster:"
 log "  psql postgresql://postgres@${COMPUTE_ID}.neon.svc.cluster.local:5432/postgres"

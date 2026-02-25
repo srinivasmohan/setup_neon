@@ -19,8 +19,17 @@ data:
     listen_pg_addr = "0.0.0.0:6400"
     listen_http_addr = "0.0.0.0:9898"
     broker_endpoint = "http://storage-broker.neon.svc.cluster.local:50051"
-    page_cache_size = 1073741824
+    # Unit: number of 8 KB blocks. 32768 = 256 MB.
+    page_cache_size = 32768
     max_file_descriptors = 500000
+    virtual_file_io_engine = "std-fs"
+    control_plane_api = "http://storage-controller.neon.svc.cluster.local:1234"
+    control_plane_emergency_mode = true
+
+    [remote_storage]
+    bucket_name = "PLACEHOLDER_S3_BUCKET"
+    bucket_region = "us-west-2"
+    prefix_in_bucket = "pageserver/"
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -53,17 +62,14 @@ spec:
               name: pg
             - containerPort: 9898
               name: http
+          command: ["/bin/sh", "-c"]
           args:
-            - "-D"
-            - "/data"
-            - "-c"
-            - "broker_endpoint=http://storage-broker.neon.svc.cluster.local:50051"
-            - "-c"
-            - "listen_pg_addr=0.0.0.0:6400"
-            - "-c"
-            - "listen_http_addr=0.0.0.0:9898"
-            - "-c"
-            - "page_cache_size=1073741824"
+            - |
+              ORDINAL=${HOSTNAME##*-}
+              PS_ID=$((ORDINAL + 1))
+              cp /etc/pageserver/pageserver.toml /data/pageserver.toml
+              echo "id = ${PS_ID}" > /data/identity.toml
+              exec pageserver -D /data
           env:
             - name: NEON_REMOTE_STORAGE_S3_BUCKET
               value: "PLACEHOLDER_S3_BUCKET"
@@ -80,10 +86,9 @@ spec:
           resources:
             requests:
               cpu: "500m"
-              memory: "1Gi"
+              memory: "512Mi"
             limits:
               cpu: "2"
-              memory: "4Gi"
           readinessProbe:
             httpGet:
               path: /v1/status

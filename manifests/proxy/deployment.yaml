@@ -29,13 +29,15 @@ spec:
             - "0.0.0.0:4432"
             - "--http"
             - "0.0.0.0:7000"
+            - "--mgmt"
+            - "127.0.0.1:7001"
           resources:
             requests:
-              cpu: "500m"
-              memory: "512Mi"
+              cpu: "100m"
+              memory: "256Mi"
             limits:
-              cpu: "2"
-              memory: "2Gi"
+              cpu: "1"
+              memory: "1Gi"
           readinessProbe:
             tcpSocket:
               port: 4432

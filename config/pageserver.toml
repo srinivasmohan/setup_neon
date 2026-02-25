@@ -10,8 +10,9 @@ broker_endpoint = "http://storage-broker.neon.svc.cluster.local:50051"
 # Availability zone (overridden per pod via env var if needed)
 # availability_zone = "us-west-2a"
 
-# Page cache size in bytes (8GB)
-page_cache_size = 8589934592
+# Page cache size in number of 8 KB blocks. Default is 8192 (64 MB).
+# 32768 = 256 MB, 131072 = 1 GB.
+page_cache_size = 32768
 
 # Max file descriptors for layer files
 max_file_descriptors = 500000
