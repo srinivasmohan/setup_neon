@@ -471,6 +471,7 @@ See [SIZING.md](SIZING.md) for the full breakdown.
 - **NAT Gateway** (~$35/month): Required for private subnets to pull ECR images
 - **Network Load Balancer** (~$18/month): For proxy service
 - **t3.large burst credits**: Sustained CPU above 20% baseline consumes credits
+- **gp3 IOPS/throughput**: The `gp3-encrypted` StorageClass is set to 16k IOPS / 1000 MB/s throughput. gp3 baseline is 3000 IOPS / 125 MB/s (free). Extra IOPS cost $0.005/IOPS/month, extra throughput $0.04/MB/s/month — that's ~$100/month per PVC (5 PVCs = ~$500/month). For long-lived test clusters, drop to defaults in `manifests/storage-classes.yaml`.
 
 ---
 
