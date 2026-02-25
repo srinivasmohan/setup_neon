@@ -126,7 +126,10 @@ SPEC_JSON=$(cat <<EOF
     "safekeeper-2.safekeeper.neon.svc.cluster.local:5454"
   ],
   "mode": "Primary",
-  "skip_pg_catalog_updates": false
+  "skip_pg_catalog_updates": false,
+  "compute_ctl_config": {
+    "jwks": {"keys": []}
+  }
 }
 EOF
 )
