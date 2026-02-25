@@ -85,6 +85,11 @@ SPEC_JSON=$(cat <<EOF
       "name": "${COMPUTE_ID}",
       "roles": [
         {
+          "name": "cloud_admin",
+          "encrypted_password": null,
+          "options": null
+        },
+        {
           "name": "postgres",
           "encrypted_password": null,
           "options": null
@@ -127,7 +132,8 @@ SPEC_JSON=$(cat <<EOF
       "safekeeper-2.safekeeper.neon.svc.cluster.local:5454"
     ],
     "mode": "Primary",
-    "skip_pg_catalog_updates": false
+    "skip_pg_catalog_updates": false,
+    "suspend_timeout_seconds": 0
   },
   "compute_ctl_config": {
     "jwks": {"keys": []}
@@ -161,7 +167,7 @@ spec:
         - "--pgdata"
         - "/data/pgdata"
         - "--connstr"
-        - "postgresql://postgres@localhost:5432/postgres"
+        - "postgresql://cloud_admin@localhost:5432/postgres"
         - "--pgbin"
         - "/usr/local/pgsql/bin/postgres"
         - "--compute-id"
