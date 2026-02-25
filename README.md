@@ -4,7 +4,7 @@ Automated deployment of [Neon](https://github.com/neondatabase/neon) (serverless
 
 **Region:** us-west-2 | **Prefix:** `smohan-neon1` | **Host OS:** Fedora 43
 
-> **STATUS: Work in progress.** The data plane (pageserver, safekeepers, broker, proxy, storage-controller) builds and deploys. The **compute node** (Postgres that actually runs queries) has no Dockerfile or K8s manifest yet — without it, you have storage infrastructure but can't run SQL. See [Known Gaps / TODO](#known-gaps--todo).
+> **STATUS: Work in progress.** The data plane (pageserver, safekeepers, broker, proxy, storage-controller) builds and deploys. Compute nodes (Postgres) can be spun up per-tenant via `06-spin-compute.sh`. See [Known Gaps / TODO](#known-gaps--todo).
 
 ---
 
@@ -99,6 +99,8 @@ setup_neon/
 ├── 03-create-aws-infra.sh          # EKS cluster, S3, VPC endpoint, IAM/IRSA, ECR
 ├── 04-push-images.sh               # Tag and push images to ECR
 ├── 05-deploy-neon.sh               # Apply K8s manifests to EKS
+├── 06-spin-compute.sh              # Create tenant + timeline, deploy a compute pod
+├── 06-teardown-compute.sh          # Tear down compute pods (single, all, or list)
 ├── 99-teardown.sh                  # Destroy ALL AWS resources (reads .env)
 ├── create_iam_user.sh              # One-time: create IAM user for deployment
 ├── test_docker.sh                  # Smoke-test locally built Docker images
@@ -112,7 +114,8 @@ setup_neon/
 │   ├── Dockerfile.safekeeper       # fedora:43 base
 │   ├── Dockerfile.proxy            # fedora:43 base
 │   ├── Dockerfile.storage-broker   # fedora:43 base
-│   └── Dockerfile.storage-controller  # fedora:43 base
+│   ├── Dockerfile.storage-controller  # fedora:43 base
+│   └── Dockerfile.compute            # fedora:43 base, PostgreSQL v17 + neon extensions + compute_ctl
 ├── manifests/
 │   ├── namespace.yaml              # neon namespace
 │   ├── storage-classes.yaml        # gp3-encrypted StorageClass
@@ -168,16 +171,17 @@ This creates user `smohan_neon_access` with `AdministratorAccess` (eksctl needs 
 
 ## Pipeline Overview
 
-The deployment is split into 6 phases. Each script is idempotent — safe to re-run after partial failures.
+The deployment is split into 7 phases. Phases 0-5 are idempotent — safe to re-run after partial failures. Phase 6 creates new compute instances on each run.
 
 | Phase | Script | Time | AWS Needed? | What It Does |
 |---|---|---|---|---|
 | 0 | `00-prerequisites.sh` | ~10 min | No | Install all build tools |
-| 1 | `01-build-neon.sh` | ~30 min | No | Build Rust binaries + postgres extensions |
-| 2 | `02-build-images.sh` | ~2 min | No | Build 5 Docker images locally |
+| 1 | `01-build-neon.sh` | ~30 min | No | Build Rust binaries + postgres extensions + compute_ctl |
+| 2 | `02-build-images.sh` | ~2 min | No | Build 6 Docker images locally |
 | 3 | `03-create-aws-infra.sh` | ~20 min | Yes | EKS, S3, VPC endpoint, IAM, ECR |
 | 4 | `04-push-images.sh` | ~5 min | Yes | Push images to ECR |
-| 5 | `05-deploy-neon.sh` | ~5 min | Yes | Deploy K8s manifests |
+| 5 | `05-deploy-neon.sh` | ~5 min | Yes | Deploy data plane (broker, safekeepers, pageserver, proxy) |
+| 6 | `06-spin-compute.sh` | ~1 min | Yes | Create tenant + timeline, deploy a compute pod |
 
 Key design decision: Docker images are built **before** AWS infrastructure. This lets you verify images work locally (`test_docker.sh`) before spending 20 minutes on EKS cluster creation.
 
@@ -237,8 +241,11 @@ export AWS_SECRET_ACCESS_KEY=<secret>
 # Phase 4: Push to ECR
 ./04-push-images.sh
 
-# Phase 5: Deploy to EKS
+# Phase 5: Deploy data plane to EKS
 ./05-deploy-neon.sh
+
+# Phase 6: Spin up a compute node (Postgres)
+./06-spin-compute.sh
 ```
 
 ### After Deployment
@@ -248,9 +255,48 @@ kubectl get pods -n neon           # All pods should be Running
 kubectl get svc -n neon            # Check services and LoadBalancer
 ```
 
+### Connecting to Postgres
+
+After `06-spin-compute.sh` completes, it prints the compute pod name (e.g., `compute-a1b2c3d4`):
+
+```bash
+# Port-forward from your machine
+kubectl port-forward -n neon pod/compute-a1b2c3d4 5432:5432
+
+# Connect with psql
+psql postgresql://postgres@localhost:5432/postgres
+```
+
+### Managing Compute Nodes
+
+```bash
+# List running compute pods
+./06-teardown-compute.sh --list
+
+# Spin up another compute (new tenant + database)
+./06-spin-compute.sh
+
+# Tear down a specific compute
+./06-teardown-compute.sh compute-a1b2c3d4
+
+# Tear down ALL compute pods (prompts for confirmation)
+./06-teardown-compute.sh --all
+```
+
+Tearing down a compute only removes the pod — tenant/timeline data remains on pageserver/S3. You can spin up a new compute pointing at the same data.
+
 ---
 
 ## Teardown
+
+### Compute Nodes Only
+
+```bash
+./06-teardown-compute.sh --list     # See what's running
+./06-teardown-compute.sh --all      # Remove all compute pods (data stays on pageserver)
+```
+
+### Full AWS Teardown
 
 ```bash
 ./99-teardown.sh
@@ -342,12 +388,12 @@ The build script also:
 
 | Resource | Name/ID | Purpose |
 |---|---|---|
-| EKS Cluster | `smohan-neon1-cluster` | Managed K8s 1.28, 2x t3.large nodes |
+| EKS Cluster | `smohan-neon1-cluster` | Managed K8s 1.32, 2x t3.large nodes |
 | S3 Bucket | `smohan-neon1-pageserver-data` | Pageserver durable storage (versioned, lifecycle policies) |
 | VPC Endpoint | Gateway type | S3 access without NAT egress charges |
 | IAM Policy | `smohan-neon1-pageserver-s3` | S3 read/write scoped to the bucket |
 | IRSA | `pageserver-sa` in namespace `neon` | Pods get S3 access via service account, no hardcoded keys |
-| ECR Repos | `neon/{pageserver,safekeeper,proxy,storage-broker}` | Container registry |
+| ECR Repos | `neon/{pageserver,safekeeper,proxy,storage-broker,storage-controller,compute}` | Container registry |
 | StorageClass | `gp3-encrypted` | 16k IOPS, encrypted EBS volumes |
 
 ### EKS Cluster Config
@@ -376,6 +422,18 @@ All manifests use `PLACEHOLDER_ECR_REGISTRY` and `PLACEHOLDER_S3_BUCKET` which a
 4. **Safekeepers** — StatefulSet (3 replicas) + headless Service + 10Gi PVCs
 5. **Pageserver** — StatefulSet (2 replicas) + headless Service + 20Gi PVCs + ServiceAccount + ConfigMap
 6. **Proxy** — Deployment (1 replica) + LoadBalancer Service
+7. **Compute** — Created on-demand by `06-spin-compute.sh` (Pod + ConfigMap + ClusterIP Service per tenant)
+
+### Compute Nodes
+
+Unlike the static data plane, compute pods are created dynamically. Each `06-spin-compute.sh` invocation:
+
+1. Creates a tenant + timeline on pageserver (via HTTP API)
+2. Generates a compute spec JSON (ConfigMap) with tenant/timeline IDs and cluster DNS addresses
+3. Deploys a Pod running `compute_ctl` which launches PostgreSQL
+4. Creates a ClusterIP Service for the pod
+
+Compute pods are **stateless** — PGDATA uses `emptyDir`. All data lives in pageserver/S3. Destroying and recreating a compute pod for the same tenant/timeline picks up where it left off.
 
 ### Why StatefulSets
 
@@ -521,9 +579,7 @@ Using [kube-rs](https://github.com/kube-rs/kube):
 
 ## Known Gaps / TODO
 
-- **Compute node**: No Dockerfile or K8s manifest yet. Without a Postgres compute node, you can't actually run queries — only manage storage. This is core infrastructure.
 - **Storage controller**: Docker image builds, but no K8s manifest in `manifests/`.
-- **ECR repos**: `03-create-aws-infra.sh` only creates 4 ECR repos (missing `storage-controller` and `compute`).
 - **`mold` not in `00-prerequisites.sh`**: Should add `sudo dnf install -y mold`.
 - **Hardcoded neon source path**: `01-build-neon.sh` and `02-build-images.sh` hardcode `/home/srinivas/SourceCode/neon`.
 - **Proxy configuration**: Currently starts with minimal args — needs auth configuration and compute routing for production use.
@@ -573,10 +629,43 @@ kubectl port-forward -n neon svc/pageserver 9898:9898
 ### AWS
 
 ```bash
-aws eks describe-cluster --name smohan-neon1-cluster --region us-west-2
-aws eks update-kubeconfig --name smohan-neon1-cluster --region us-west-2
-aws s3 ls s3://smohan-neon1-pageserver-data/ --recursive
-aws ecr describe-repositories --region us-west-2
+# ── Identity & credentials ──
+aws sts get-caller-identity                          # Verify which account/user you're using
+aws iam list-access-keys --user-name smohan_neon_access  # List access keys for deploy user
+
+# ── EKS cluster ──
+aws eks list-clusters --region us-west-2             # List all clusters
+aws eks describe-cluster --name smohan-neon1-cluster --region us-west-2  # Cluster details
+aws eks update-kubeconfig --name smohan-neon1-cluster --region us-west-2  # Update kubeconfig
+eksctl get cluster --region us-west-2                # eksctl view of clusters
+eksctl get nodegroup --cluster smohan-neon1-cluster --region us-west-2   # Node group status
+
+# ── ECR (container registry) ──
+aws ecr describe-repositories --region us-west-2 --query "repositories[].repositoryName" --output table
+aws ecr list-images --repository-name neon/pageserver --region us-west-2  # Images in a repo
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <ECR_REGISTRY>
+
+# ── S3 ──
+aws s3 ls 2>&1 | grep smohan-neon1                   # Check bucket exists
+aws s3 ls s3://smohan-neon1-pageserver-data/ --recursive  # List bucket contents
+aws s3api get-bucket-versioning --bucket smohan-neon1-pageserver-data  # Versioning status
+
+# ── VPC & networking ──
+aws ec2 describe-vpc-endpoints --region us-west-2 \
+    --filters "Name=service-name,Values=com.amazonaws.us-west-2.s3" \
+    --query "VpcEndpoints[].{ID:VpcEndpointId,State:State}" --output table
+
+# ── IAM ──
+aws iam get-policy --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/smohan-neon1-pageserver-s3
+kubectl get sa pageserver-sa -n neon -o jsonpath='{.metadata.annotations}' # IRSA annotation
+
+# ── CloudFormation (eksctl uses this under the hood) ──
+aws cloudformation list-stacks --region us-west-2 \
+    --query "StackSummaries[?contains(StackName,'smohan-neon1') && StackStatus!='DELETE_COMPLETE'].[StackName,StackStatus]" --output table
+
+# ── Cost check ──
+# No CLI for real-time cost — use AWS Cost Explorer in the console.
+# Key billing items: EKS control plane ($0.10/hr), EC2 t3.large ($0.0832/hr each), NAT Gateway ($0.045/hr)
 ```
 
 ---
