@@ -90,7 +90,7 @@ else
 fi
 
 # ── Build neon-pg-ext-v17 (postgres extensions for compute nodes) ─────────────
-if [[ ! -f "${NEON_DIR}/pg_install/v17/lib/neon.so" ]]; then
+if [[ ! -f "${NEON_DIR}/pg_install/v17/lib/postgresql/neon.so" ]]; then
     log "Building neon-pg-ext-v17..."
     make neon-pg-ext-v17 -j1
 else
@@ -100,7 +100,7 @@ fi
 # ── Build ─────────────────────────────────────────────────────────────────────
 # Build each package individually to minimise memory pressure and avoid
 # corrupted LTO bitcode from a prior interrupted build.
-PACKAGES=(pageserver safekeeper proxy storage_broker storage_controller)
+PACKAGES=(pageserver safekeeper proxy storage_broker storage_controller compute_tools)
 for pkg in "${PACKAGES[@]}"; do
     log "Building ${pkg} (cargo build --release -j1 -p ${pkg})..."
     cargo build --release -j1 -p "${pkg}"
@@ -108,7 +108,7 @@ for pkg in "${PACKAGES[@]}"; do
 done
 
 # ── Verify ────────────────────────────────────────────────────────────────────
-BINARIES=(pageserver safekeeper proxy storage_broker storage_controller)
+BINARIES=(pageserver safekeeper proxy storage_broker storage_controller compute_ctl)
 log ""
 log "Build complete. Checking binaries:"
 ALL_OK=true

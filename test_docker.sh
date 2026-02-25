@@ -13,6 +13,7 @@ declare -A TESTS=(
     ["proxy"]="--version"
     ["storage-broker"]="--help"
     ["storage-controller"]="--version"
+    ["compute"]="--help"
 )
 
 for component in "${!TESTS[@]}"; do

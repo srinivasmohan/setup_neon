@@ -30,7 +30,7 @@ aws ecr get-login-password --region "${REGION}" \
 
 # ── Tag & push each image ────────────────────────────────────────────────────
 IMAGE_TAG="latest"
-COMPONENTS=(pageserver safekeeper proxy storage-broker storage-controller)
+COMPONENTS=(pageserver safekeeper proxy storage-broker storage-controller compute)
 
 for component in "${COMPONENTS[@]}"; do
     LOCAL_TAG="neon/${component}:latest"

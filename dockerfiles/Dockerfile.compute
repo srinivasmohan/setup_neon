@@ -1,0 +1,28 @@
+FROM fedora:43
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+    ca-certificates readline openssl-libs libicu libxml2 libxslt \
+    libcurl lz4-libs zstd \
+    && dnf clean all
+
+RUN groupadd -r neon && useradd -r -g neon -m -d /home/neon -s /bin/bash neon
+
+# PostgreSQL v17 with Neon extensions baked in
+COPY .docker-staging/pg_install /usr/local/pgsql
+ENV PATH="/usr/local/pgsql/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/pgsql/lib"
+ENV PGDATA="/data/pgdata"
+
+# compute_ctl — Neon's compute node launcher
+COPY .docker-staging/compute_ctl /usr/local/bin/compute_ctl
+RUN chmod +x /usr/local/bin/compute_ctl
+
+RUN mkdir -p /data/pgdata && chown -R neon:neon /data
+VOLUME /data
+
+USER neon
+WORKDIR /home/neon
+
+EXPOSE 5432 3080
+
+ENTRYPOINT ["compute_ctl"]

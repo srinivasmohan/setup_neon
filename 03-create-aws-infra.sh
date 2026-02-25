@@ -26,7 +26,7 @@ CLUSTER_NAME="${PREFIX}-cluster"
 S3_BUCKET="${PREFIX}-pageserver-data"
 REGION="${AWS_DEFAULT_REGION}"
 IAM_POLICY_NAME="${PREFIX}-pageserver-s3"
-ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker" "neon/storage-controller")
+ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker" "neon/storage-controller" "neon/compute")
 
 # ── Helper: write/update .env ─────────────────────────────────────────────────
 write_env() {

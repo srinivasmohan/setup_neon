@@ -10,11 +10,15 @@ log()  { echo "==> [images] $*"; }
 die()  { echo "==> [images] FATAL: $*" >&2; exit 1; }
 
 # ── Verify binaries exist ────────────────────────────────────────────────────
-BINARIES=(pageserver safekeeper proxy storage_broker storage_controller)
+BINARIES=(pageserver safekeeper proxy storage_broker storage_controller compute_ctl)
 for bin in "${BINARIES[@]}"; do
     [[ -x "${NEON_DIR}/target/release/${bin}" ]] \
         || die "Binary not found: ${NEON_DIR}/target/release/${bin}. Run 01-build-neon.sh first."
 done
+[[ -x "${NEON_DIR}/pg_install/v17/bin/postgres" ]] \
+    || die "PostgreSQL v17 not found at ${NEON_DIR}/pg_install/v17/. Run 01-build-neon.sh first."
+[[ -f "${NEON_DIR}/pg_install/v17/lib/postgresql/neon.so" ]] \
+    || die "Neon extensions not found. Run 01-build-neon.sh first."
 log "All binaries verified."
 
 # ── Stage binaries for Docker build context ─────────────────────────────────
@@ -24,6 +28,10 @@ mkdir -p "${STAGING}"
 for bin in "${BINARIES[@]}"; do
     cp "${NEON_DIR}/target/release/${bin}" "${STAGING}/"
 done
+
+# Stage PostgreSQL v17 + Neon extensions for compute image
+log "Staging PostgreSQL v17 + Neon extensions for compute image..."
+cp -a "${NEON_DIR}/pg_install/v17" "${STAGING}/pg_install"
 log "Binaries staged to ${STAGING}"
 
 # ── Build each image ────────────────────────────────────────────────────────
@@ -33,6 +41,7 @@ declare -A IMAGES=(
     ["proxy"]="Dockerfile.proxy"
     ["storage-broker"]="Dockerfile.storage-broker"
     ["storage-controller"]="Dockerfile.storage-controller"
+    ["compute"]="Dockerfile.compute"
 )
 
 for component in "${!IMAGES[@]}"; do
