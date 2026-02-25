@@ -28,22 +28,19 @@ spec:
               name: pg
             - containerPort: 7676
               name: http
+          command: ["/bin/sh", "-c"]
           args:
-            - "-D"
-            - "/data"
-            - "--listen-pg"
-            - "0.0.0.0:5454"
-            - "--listen-http"
-            - "0.0.0.0:7676"
-            - "--broker-endpoint"
-            - "http://storage-broker.neon.svc.cluster.local:50051"
-            - "--advertise-pg"
-            - "$(POD_NAME).safekeeper.neon.svc.cluster.local:5454"
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
+            - |
+              # Extract ordinal from pod name (safekeeper-0 → 1, safekeeper-1 → 2, etc.)
+              ORDINAL=${HOSTNAME##*-}
+              SK_ID=$((ORDINAL + 1))
+              exec safekeeper \
+                -D /data \
+                --id "${SK_ID}" \
+                --listen-pg 0.0.0.0:5454 \
+                --listen-http 0.0.0.0:7676 \
+                --broker-endpoint http://storage-broker.neon.svc.cluster.local:50051 \
+                --advertise-pg "${HOSTNAME}.safekeeper.neon.svc.cluster.local:5454"
           volumeMounts:
             - name: data
               mountPath: /data
