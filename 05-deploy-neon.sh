@@ -117,6 +117,29 @@ apply_manifest "${SCRIPT_DIR}/manifests/pageserver/statefulset.yaml"
 log "Waiting for pageservers..."
 kubectl rollout status statefulset/pageserver -n neon --timeout=300s
 
+# ── 8b. Register pageserver nodes with storage controller ────────────────────
+log "Registering pageserver nodes with storage controller..."
+STORCON_URL="http://storage-controller.neon.svc.cluster.local:1234"
+REPLICAS=$(kubectl get statefulset pageserver -n neon -o jsonpath='{.spec.replicas}')
+for (( i=0; i<REPLICAS; i++ )); do
+    PS_ID=$(( i + 1 ))
+    PS_HOST="pageserver-${i}.pageserver.neon.svc.cluster.local"
+    log "  Registering node ${PS_ID} (${PS_HOST})..."
+    kubectl exec -n neon pageserver-0 -- \
+        curl -sf -X POST "${STORCON_URL}/control/v1/node" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"node_id\": ${PS_ID},
+                \"listen_pg_addr\": \"${PS_HOST}\",
+                \"listen_pg_port\": 6400,
+                \"listen_http_addr\": \"${PS_HOST}\",
+                \"listen_http_port\": 9898,
+                \"availability_zone_id\": \"az-${i}\"
+            }" \
+        || warn "Failed to register node ${PS_ID} (may already be registered)"
+done
+log "Pageserver nodes registered."
+
 # ── 9. Proxy ─────────────────────────────────────────────────────────────────
 log "Deploying proxy..."
 apply_manifest "${SCRIPT_DIR}/manifests/proxy/deployment.yaml"

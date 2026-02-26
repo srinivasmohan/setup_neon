@@ -26,6 +26,8 @@ spec:
             - "--listen"
             - "0.0.0.0:1234"
             - "--dev"
+            - "--control-plane-url"
+            - "http://localhost:1234"
           env:
             - name: DATABASE_URL
               valueFrom:

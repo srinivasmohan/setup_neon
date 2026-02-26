@@ -63,6 +63,9 @@ for app in storage-broker safekeeper pageserver; do
 done
 log "Data plane is healthy."
 
+# Storage controller service URL (use service DNS, not a specific pod)
+STORCON_URL="http://storage-controller.neon.svc.cluster.local:1234"
+
 # ── Generate IDs ───────────────────────────────────────────────────────────────
 gen_id() { python3 -c "import uuid; print(uuid.uuid4().hex)"; }
 
@@ -87,9 +90,9 @@ if [[ "${BRANCH_MODE}" == true ]]; then
     fi
     TIMELINE_BODY="${TIMELINE_BODY}}"
 
-    log "Creating branch timeline on pageserver-0..."
+    log "Creating branch timeline via storage controller..."
     TIMELINE_RESULT=$(kubectl exec -n neon pageserver-0 -- \
-        curl -sf -X POST "http://localhost:9898/v1/tenant/${TENANT_ID}/timeline" \
+        curl -sf -X POST "${STORCON_URL}/v1/tenant/${TENANT_ID}/timeline" \
             -H "Content-Type: application/json" \
             -d "${TIMELINE_BODY}" 2>&1) \
         || die "Failed to create branch timeline: ${TIMELINE_RESULT}"
@@ -104,27 +107,40 @@ else
     log "Timeline ID: ${TIMELINE_ID}"
     log "Compute ID:  ${COMPUTE_ID}"
 
-    # Create tenant via location_config API
-    log "Creating tenant on pageserver-0..."
+    # Create tenant via storage controller
+    log "Creating tenant via storage controller..."
     TENANT_RESULT=$(kubectl exec -n neon pageserver-0 -- \
-        curl -sf -X PUT "http://localhost:9898/v1/tenant/${TENANT_ID}/location_config" \
+        curl -sf -X POST "${STORCON_URL}/v1/tenant" \
             -H "Content-Type: application/json" \
-            -d '{"mode": "AttachedSingle", "generation": 1, "tenant_conf": {}}' 2>&1) \
+            -d "{\"new_tenant_id\": \"${TENANT_ID}\"}" 2>&1) \
         || die "Failed to create tenant: ${TENANT_RESULT}"
     log "Tenant created: ${TENANT_RESULT}"
 
-    # Create root timeline
-    log "Creating timeline on pageserver-0..."
+    # Create root timeline via storage controller
+    log "Creating timeline via storage controller..."
     TIMELINE_RESULT=$(kubectl exec -n neon pageserver-0 -- \
-        curl -sf -X POST "http://localhost:9898/v1/tenant/${TENANT_ID}/timeline" \
+        curl -sf -X POST "${STORCON_URL}/v1/tenant/${TENANT_ID}/timeline" \
             -H "Content-Type: application/json" \
             -d "{\"new_timeline_id\": \"${TIMELINE_ID}\", \"pg_version\": 17}" 2>&1) \
         || die "Failed to create timeline: ${TIMELINE_RESULT}"
     log "Timeline created."
 fi
 
-# ── Internal DNS names ───────────────────────────────────────────────────────
-PAGESERVER_HOST="pageserver-0.pageserver.neon.svc.cluster.local"
+# ── Resolve pageserver from storage controller ──────────────────────────────
+# The controller knows which pageserver node the tenant was placed on.
+PS_NODE_ID=$(kubectl exec -n neon pageserver-0 -- \
+    curl -sf "${STORCON_URL}/control/v1/tenant/${TENANT_ID}" 2>&1 \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['shards'][0]['node_attached'])" 2>/dev/null) \
+    || PS_NODE_ID=""
+
+if [[ -n "${PS_NODE_ID}" && "${PS_NODE_ID}" != "None" && "${PS_NODE_ID}" != "null" ]]; then
+    PS_ORDINAL=$(( PS_NODE_ID - 1 ))
+    PAGESERVER_HOST="pageserver-${PS_ORDINAL}.pageserver.neon.svc.cluster.local"
+    log "Tenant placed on node ${PS_NODE_ID} → ${PAGESERVER_HOST}"
+else
+    PAGESERVER_HOST="pageserver-0.pageserver.neon.svc.cluster.local"
+    warn "Could not resolve tenant placement; defaulting to ${PAGESERVER_HOST}"
+fi
 SAFEKEEPERS="safekeeper-0.safekeeper.neon.svc.cluster.local:5454,safekeeper-1.safekeeper.neon.svc.cluster.local:5454,safekeeper-2.safekeeper.neon.svc.cluster.local:5454"
 
 # ── Generate compute spec JSON ───────────────────────────────────────────────
