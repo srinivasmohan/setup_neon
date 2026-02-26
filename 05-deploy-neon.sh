@@ -47,21 +47,61 @@ kubectl apply -f "${SCRIPT_DIR}/manifests/namespace.yaml"
 log "Applying storage classes..."
 kubectl apply -f "${SCRIPT_DIR}/manifests/storage-classes.yaml"
 
-# ── 3. Storage Broker ────────────────────────────────────────────────────────
+# ── 3. CNPG Operator ────────────────────────────────────────────────────────
+CNPG_VERSION="1.25.1"
+CNPG_RELEASE_URL="https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-${CNPG_VERSION}.yaml"
+
+log "Installing CloudNativePG operator v${CNPG_VERSION}..."
+kubectl apply --server-side -f "${CNPG_RELEASE_URL}"
+
+log "Waiting for CNPG controller-manager to be ready..."
+kubectl rollout status deployment/cnpg-controller-manager -n cnpg-system --timeout=120s
+
+# ── 4. CNPG PostgreSQL Cluster ──────────────────────────────────────────────
+log "Deploying CNPG PostgreSQL cluster for storage controller..."
+kubectl apply -f "${SCRIPT_DIR}/manifests/cnpg/cluster.yaml"
+
+log "Waiting for CNPG cluster to reach 3/3 ready instances (up to 5 min)..."
+CNPG_TIMEOUT=300
+CNPG_INTERVAL=10
+CNPG_ELAPSED=0
+while true; do
+    READY=$(kubectl get cluster storage-controller-pg-cluster -n neon \
+        -o jsonpath='{.status.readyInstances}' 2>/dev/null || echo "0")
+    if [[ "${READY}" == "3" ]]; then
+        log "CNPG cluster ready (${READY}/3 instances)."
+        break
+    fi
+    if (( CNPG_ELAPSED >= CNPG_TIMEOUT )); then
+        die "CNPG cluster not ready after ${CNPG_TIMEOUT}s (${READY}/3 instances)."
+    fi
+    log "  CNPG cluster: ${READY}/3 ready — waiting ${CNPG_INTERVAL}s..."
+    sleep "${CNPG_INTERVAL}"
+    (( CNPG_ELAPSED += CNPG_INTERVAL ))
+done
+
+# ── 5. Storage Controller ──────────────────────────────────────────────────
+log "Deploying storage-controller..."
+apply_manifest "${SCRIPT_DIR}/manifests/storage-controller/deployment.yaml"
+
+log "Waiting for storage-controller to be ready..."
+kubectl rollout status deployment/storage-controller -n neon --timeout=120s
+
+# ── 6. Storage Broker ────────────────────────────────────────────────────────
 log "Deploying storage-broker..."
 apply_manifest "${SCRIPT_DIR}/manifests/storage-broker/deployment.yaml"
 
 log "Waiting for storage-broker to be ready..."
 kubectl rollout status deployment/storage-broker -n neon --timeout=120s
 
-# ── 4. Safekeepers ───────────────────────────────────────────────────────────
+# ── 7. Safekeepers ───────────────────────────────────────────────────────────
 log "Deploying safekeepers (3 replicas)..."
 apply_manifest "${SCRIPT_DIR}/manifests/safekeeper/statefulset.yaml"
 
 log "Waiting for safekeepers..."
 kubectl rollout status statefulset/safekeeper -n neon --timeout=300s
 
-# ── 5. Pageserver ────────────────────────────────────────────────────────────
+# ── 8. Pageserver ────────────────────────────────────────────────────────────
 log "Deploying pageserver (2 replicas)..."
 
 # Patch the IRSA annotation onto the ServiceAccount
@@ -77,7 +117,7 @@ apply_manifest "${SCRIPT_DIR}/manifests/pageserver/statefulset.yaml"
 log "Waiting for pageservers..."
 kubectl rollout status statefulset/pageserver -n neon --timeout=300s
 
-# ── 6. Proxy ─────────────────────────────────────────────────────────────────
+# ── 9. Proxy ─────────────────────────────────────────────────────────────────
 log "Deploying proxy..."
 apply_manifest "${SCRIPT_DIR}/manifests/proxy/deployment.yaml"
 

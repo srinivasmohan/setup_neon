@@ -63,7 +63,8 @@ Neon's **data plane** is open source. The **control plane** (tenant management, 
 | **Safekeeper** | Rust | WAL acceptor — Paxos consensus, 3+ nodes for HA quorum | 5454 (pg), 7676 (http) |
 | **Storage Broker** | Rust | Coordinator — safekeeper discovery and health | 50051 (gRPC) |
 | **Proxy** | Rust | Connection pooler/router — directs traffic to compute nodes | 4432 (pg), 7000 (http) |
-| **Storage Controller** | Rust | Manages pageserver sharding and tenant placement | 6060, 9898 |
+| **Storage Controller** | Rust | Manages pageserver sharding and tenant placement | 1234 (http) |
+| **CNPG PostgreSQL** | PostgreSQL | HA metadata store for storage controller (3 instances via CloudNativePG) | 5432 |
 | **Compute Node** | Modified Postgres | Standard Postgres with Neon storage manager — reads from pageserver | 5432 |
 
 ### Data Flow
@@ -119,6 +120,10 @@ setup_neon/
 ├── manifests/
 │   ├── namespace.yaml              # neon namespace
 │   ├── storage-classes.yaml        # gp3-encrypted StorageClass
+│   ├── cnpg/
+│   │   └── cluster.yaml            # CNPG PostgreSQL cluster (3 instances) for storage controller
+│   ├── storage-controller/
+│   │   └── deployment.yaml         # Deployment + ClusterIP Service
 │   ├── storage-broker/
 │   │   └── deployment.yaml         # Deployment + ClusterIP Service
 │   ├── safekeeper/
@@ -315,7 +320,7 @@ Confirms before proceeding. Destroys in reverse order:
 
 Re-runnable — skips resources that don't exist.
 
-**Daily cost if left running: ~$8.75/day.** Always tear down when not in use.
+**Daily cost if left running: ~$10.90/day.** Always tear down when not in use.
 
 ---
 
@@ -388,17 +393,17 @@ The build script also:
 
 | Resource | Name/ID | Purpose |
 |---|---|---|
-| EKS Cluster | `smohan-neon1-cluster` | Managed K8s 1.32, 2x t3.large nodes |
+| EKS Cluster | `smohan-neon1-cluster` | Managed K8s 1.32, 3x t3.large nodes |
 | S3 Bucket | `smohan-neon1-pageserver-data` | Pageserver durable storage (versioned, lifecycle policies) |
 | VPC Endpoint | Gateway type | S3 access without NAT egress charges |
 | IAM Policy | `smohan-neon1-pageserver-s3` | S3 read/write scoped to the bucket |
 | IRSA | `pageserver-sa` in namespace `neon` | Pods get S3 access via service account, no hardcoded keys |
 | ECR Repos | `neon/{pageserver,safekeeper,proxy,storage-broker,storage-controller,compute}` | Container registry |
-| StorageClass | `gp3-encrypted` | 16k IOPS, encrypted EBS volumes |
+| StorageClass | `gp3-encrypted` | Stock gp3 (3000 IOPS / 125 MB/s), encrypted EBS volumes |
 
 ### EKS Cluster Config
 
-- 2x `t3.large` nodes (2 vCPU, 8GB each) — burstable, fine for testing
+- 3x `t3.large` nodes (2 vCPU, 8GB each) — burstable, fine for testing
 - Private networking, gp3 root volumes
 - OIDC enabled for IRSA
 - Addons: vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver
@@ -418,11 +423,14 @@ All manifests use `PLACEHOLDER_ECR_REGISTRY` and `PLACEHOLDER_S3_BUCKET` which a
 
 1. **Namespace** (`neon`)
 2. **StorageClass** (`gp3-encrypted`)
-3. **Storage Broker** — Deployment (1 replica) + ClusterIP Service
-4. **Safekeepers** — StatefulSet (3 replicas) + headless Service + 10Gi PVCs
-5. **Pageserver** — StatefulSet (2 replicas) + headless Service + 20Gi PVCs + ServiceAccount + ConfigMap
-6. **Proxy** — Deployment (1 replica) + LoadBalancer Service
-7. **Compute** — Created on-demand by `06-spin-compute.sh` (Pod + ConfigMap + ClusterIP Service per tenant)
+3. **CNPG Operator** — CloudNativePG controller-manager (installed from upstream release)
+4. **CNPG PostgreSQL Cluster** — 3-instance HA Postgres for storage controller metadata
+5. **Storage Controller** — Deployment (1 replica) + ClusterIP Service
+6. **Storage Broker** — Deployment (1 replica) + ClusterIP Service
+7. **Safekeepers** — StatefulSet (3 replicas) + headless Service + 10Gi PVCs
+8. **Pageserver** — StatefulSet (2 replicas) + headless Service + 20Gi PVCs + ServiceAccount + ConfigMap
+9. **Proxy** — Deployment (1 replica) + LoadBalancer Service
+10. **Compute** — Created on-demand by `06-spin-compute.sh` (Pod + ConfigMap + ClusterIP Service per tenant)
 
 ### Compute Nodes
 
@@ -444,6 +452,8 @@ Compute pods are **stateless** — PGDATA uses `emptyDir`. All data lives in pag
 ### Internal DNS
 
 ```
+storage-controller.neon.svc.cluster.local:1234
+storage-controller-pg-cluster-rw.neon.svc.cluster.local:5432
 storage-broker.neon.svc.cluster.local:50051
 safekeeper-{0,1,2}.safekeeper.neon.svc.cluster.local:5454
 pageserver-{0,1}.pageserver.neon.svc.cluster.local:6400
@@ -456,10 +466,10 @@ pageserver-{0,1}.pageserver.neon.svc.cluster.local:6400
 See [SIZING.md](SIZING.md) for the full breakdown.
 
 **Test setup (current):**
-- 2x t3.large (2 vCPU, 8GB each)
-- 7 pods total, ~2.25 CPU / ~4.25GB RAM requested
-- ~180GB total disk (EBS + PVCs + S3)
-- **~$263/month** (~$8.75/day)
+- 3x t3.large (2 vCPU, 8GB each)
+- 12 pods total (3 CNPG + 1 storage controller + 8 existing), ~3.35 CPU / ~5.5GB RAM requested
+- ~242GB total disk (EBS + PVCs + S3)
+- **~$327/month** (~$10.90/day)
 
 **Production (future):**
 - 3-5x m7i.4xlarge (16 vCPU, 64GB each)
@@ -471,8 +481,6 @@ See [SIZING.md](SIZING.md) for the full breakdown.
 - **NAT Gateway** (~$35/month): Required for private subnets to pull ECR images
 - **Network Load Balancer** (~$18/month): For proxy service
 - **t3.large burst credits**: Sustained CPU above 20% baseline consumes credits
-- **gp3 IOPS/throughput**: The `gp3-encrypted` StorageClass is set to 16k IOPS / 1000 MB/s throughput. gp3 baseline is 3000 IOPS / 125 MB/s (free). Extra IOPS cost $0.005/IOPS/month, extra throughput $0.04/MB/s/month — that's ~$100/month per PVC (5 PVCs = ~$500/month). For long-lived test clusters, drop to defaults in `manifests/storage-classes.yaml`.
-
 ---
 
 ## Verification & Debugging
@@ -580,7 +588,6 @@ Using [kube-rs](https://github.com/kube-rs/kube):
 
 ## Known Gaps / TODO
 
-- **Storage controller**: Docker image builds, but no K8s manifest in `manifests/`.
 - **`mold` not in `00-prerequisites.sh`**: Should add `sudo dnf install -y mold`.
 - **Hardcoded neon source path**: `01-build-neon.sh` and `02-build-images.sh` hardcode `/home/srinivas/SourceCode/neon`.
 - **Proxy configuration**: Currently starts with minimal args — needs auth configuration and compute routing for production use.

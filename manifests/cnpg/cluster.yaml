@@ -1,0 +1,24 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: storage-controller-pg-cluster
+  namespace: neon
+  labels:
+    app: storage-controller-pg
+    app.kubernetes.io/part-of: neon
+spec:
+  instances: 3
+  storage:
+    size: 2Gi
+    storageClass: gp3-encrypted
+  bootstrap:
+    initdb:
+      database: storage_controller
+      owner: app
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"

@@ -52,7 +52,7 @@ fi
 echo ""
 
 # ── 1. Delete Kubernetes namespace (cascades to all workloads) ────────────────
-log "Step 1/7: Deleting Kubernetes namespace 'neon'..."
+log "Step 1/8: Deleting Kubernetes namespace 'neon'..."
 if kubectl get namespace neon &>/dev/null 2>&1; then
     kubectl delete namespace neon --timeout=120s || warn "Namespace deletion timed out; it may still be terminating."
     log "Namespace deleted."
@@ -60,8 +60,20 @@ else
     log "Namespace 'neon' not found — skipping."
 fi
 
+# ── 1b. Delete CNPG operator ────────────────────────────────────────────────
+CNPG_VERSION="1.25.1"
+CNPG_RELEASE_URL="https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.25/releases/cnpg-${CNPG_VERSION}.yaml"
+
+log "Deleting CNPG operator (if installed)..."
+if kubectl get namespace cnpg-system &>/dev/null; then
+    kubectl delete -f "${CNPG_RELEASE_URL}" --ignore-not-found --timeout=60s \
+        || warn "CNPG operator deletion returned an error."
+else
+    log "CNPG operator not found — skipping."
+fi
+
 # ── 2. Delete IRSA service account ───────────────────────────────────────────
-log "Step 2/7: Deleting IRSA service account..."
+log "Step 2/8: Deleting IRSA service account..."
 if eksctl get iamserviceaccount --cluster "${CLUSTER_NAME}" --region "${REGION}" --namespace neon --name pageserver-sa &>/dev/null 2>&1; then
     eksctl delete iamserviceaccount \
         --cluster "${CLUSTER_NAME}" \
@@ -75,7 +87,7 @@ else
 fi
 
 # ── 3. Delete VPC Endpoint ───────────────────────────────────────────────────
-log "Step 3/7: Deleting VPC endpoint..."
+log "Step 3/8: Deleting VPC endpoint..."
 if [[ -n "${VPC_ENDPOINT_ID}" ]]; then
     if aws ec2 describe-vpc-endpoints --vpc-endpoint-ids "${VPC_ENDPOINT_ID}" --region "${REGION}" &>/dev/null; then
         aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "${VPC_ENDPOINT_ID}" --region "${REGION}"
@@ -88,7 +100,7 @@ else
 fi
 
 # ── 4. Delete EKS Cluster ───────────────────────────────────────────────────
-log "Step 4/7: Deleting EKS cluster '${CLUSTER_NAME}' (this takes 10-15 minutes)..."
+log "Step 4/8: Deleting EKS cluster '${CLUSTER_NAME}' (this takes 10-15 minutes)..."
 if aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" &>/dev/null; then
     eksctl delete cluster --name "${CLUSTER_NAME}" --region "${REGION}" --wait
     log "EKS cluster deleted."
@@ -97,7 +109,7 @@ else
 fi
 
 # ── 5. Delete ECR Repositories ───────────────────────────────────────────────
-log "Step 5/7: Deleting ECR repositories..."
+log "Step 5/8: Deleting ECR repositories..."
 for repo in "${ECR_REPOS[@]}"; do
     if aws ecr describe-repositories --repository-names "${repo}" --region "${REGION}" &>/dev/null; then
         aws ecr delete-repository --repository-name "${repo}" --region "${REGION}" --force
@@ -108,7 +120,7 @@ for repo in "${ECR_REPOS[@]}"; do
 done
 
 # ── 6. Delete S3 Bucket (force empty first) ──────────────────────────────────
-log "Step 6/7: Deleting S3 bucket '${S3_BUCKET}'..."
+log "Step 6/8: Deleting S3 bucket '${S3_BUCKET}'..."
 if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
     log "  Emptying bucket (all versions + delete markers)..."
 
@@ -142,7 +154,7 @@ else
 fi
 
 # ── 7. Delete IAM Policy ─────────────────────────────────────────────────────
-log "Step 7/7: Deleting IAM policy..."
+log "Step 7/8: Deleting IAM policy..."
 if [[ -n "${IAM_POLICY_ARN}" ]]; then
     if aws iam get-policy --policy-arn "${IAM_POLICY_ARN}" &>/dev/null; then
         # Detach from all roles first

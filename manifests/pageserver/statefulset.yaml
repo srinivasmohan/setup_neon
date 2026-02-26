@@ -25,7 +25,7 @@ data:
     virtual_file_io_engine = "std-fs"
     pg_distrib_dir = "/usr/local/pgsql"
     control_plane_api = "http://storage-controller.neon.svc.cluster.local:1234"
-    control_plane_emergency_mode = true
+    control_plane_emergency_mode = false
 
     [remote_storage]
     bucket_name = "PLACEHOLDER_S3_BUCKET"
