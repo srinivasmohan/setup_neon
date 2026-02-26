@@ -30,7 +30,7 @@ VPC_ENDPOINT_ID="${VPC_ENDPOINT_ID:-}"
 IAM_POLICY_ARN="${IAM_POLICY_ARN:-}"
 ECR_REGISTRY="${ECR_REGISTRY:-}"
 ACCOUNT_ID="${ACCOUNT_ID:-}"
-ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker")
+ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker" "neon/storage-controller" "neon/compute")
 
 # ── Confirmation ──────────────────────────────────────────────────────────────
 echo ""
