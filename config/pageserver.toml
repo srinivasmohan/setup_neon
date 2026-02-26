@@ -22,7 +22,7 @@ virtual_file_io_engine = "std-fs"
 pg_distrib_dir = "/usr/local/pgsql"
 
 # Storage controller (emergency mode skips re-attach when controller is absent)
-control_plane_api = "http://storage-controller.neon.svc.cluster.local:1234"
+control_plane_api = "http://storage-controller.neon.svc.cluster.local:1234/upcall/v1/"
 control_plane_emergency_mode = false
 
 # S3 remote storage — fields go directly under [remote_storage] (untagged enum)
