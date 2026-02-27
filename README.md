@@ -569,7 +569,7 @@ kubectl logs -l app=safekeeper -n neon | grep -i error
 kubectl get pods -n neon                          # Should see minio-0 pod
 kubectl port-forward -n neon svc/minio 9001:9001  # MinIO console at localhost:9001
 kubectl logs -f pageserver-0 -n neon              # Should show S3 endpoint = minio:9000
-kubectl exec -n neon minio-0 -- ls /data/neon-pageserver/  # Verify data lands in MinIO
+kubectl exec -n neon minio-0 -- ls /data/minio-s3-neon-pageserver/  # Verify data lands in MinIO
 ```
 
 ### Test Docker Images Locally

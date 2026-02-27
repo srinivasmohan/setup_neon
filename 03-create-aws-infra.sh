@@ -30,7 +30,7 @@ ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker
 # Storage backend: "aws-s3" (default) or "minio"
 STORAGE_BACKEND="${STORAGE_BACKEND:-aws-s3}"
 if [[ "${STORAGE_BACKEND}" == "minio" ]]; then
-    S3_BUCKET="neon-pageserver"
+    S3_BUCKET="minio-s3-neon-pageserver"
     log "Storage backend: MinIO — S3 bucket/VPC endpoint/IAM/IRSA will be skipped."
 else
     S3_BUCKET="${PREFIX}-pageserver-data"

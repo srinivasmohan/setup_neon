@@ -31,7 +31,7 @@ if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
     [[ -n "${S3_BUCKET:-}" ]]      || die "S3_BUCKET not set in .env"
     [[ -n "${IAM_POLICY_ARN:-}" ]] || die "IAM_POLICY_ARN not set in .env"
 else
-    S3_BUCKET="${S3_BUCKET:-neon-pageserver}"
+    S3_BUCKET="minio-s3-neon-pageserver"
 fi
 
 log "Storage backend: ${STORAGE_BACKEND}"
@@ -74,8 +74,8 @@ if [[ "${STORAGE_BACKEND}" == "minio" ]]; then
 
     log "Creating MinIO bucket '${S3_BUCKET}'..."
     kubectl run minio-init --rm --restart=Never -i \
-        --image=minio/mc --namespace=neon -- \
-        sh -c "mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/${S3_BUCKET}" \
+        --image=minio/mc --namespace=neon \
+        --command -- sh -c "mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/${S3_BUCKET}" \
         || warn "MinIO bucket creation returned an error (may already exist)"
     log "MinIO ready."
 fi
