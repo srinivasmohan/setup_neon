@@ -65,6 +65,7 @@ Neon's **data plane** is open source. The **control plane** (tenant management, 
 | **Proxy** | Rust | Connection pooler/router — directs traffic to compute nodes | 4432 (pg), 7000 (http) |
 | **Storage Controller** | Rust | Manages pageserver sharding and tenant placement | 1234 (http) |
 | **CNPG PostgreSQL** | PostgreSQL | HA metadata store for storage controller (3 instances via CloudNativePG) | 5432 |
+| **MinIO** (optional) | Go | S3-compatible object storage — replaces AWS S3 when `STORAGE_BACKEND=minio` | 9000 (s3), 9001 (console) |
 | **Compute Node** | Modified Postgres | Standard Postgres with Neon storage manager — reads from pageserver | 5432 |
 
 ### Data Flow
@@ -120,6 +121,8 @@ setup_neon/
 ├── manifests/
 │   ├── namespace.yaml              # neon namespace
 │   ├── storage-classes.yaml        # gp3-encrypted StorageClass
+│   ├── minio/
+│   │   └── statefulset.yaml        # MinIO StatefulSet + Secret + Service (optional, STORAGE_BACKEND=minio)
 │   ├── cnpg/
 │   │   └── cluster.yaml            # CNPG PostgreSQL cluster (3 instances) for storage controller
 │   ├── storage-controller/
@@ -153,6 +156,24 @@ setup_neon/
 - **kubectl**
 - **eksctl**
 - **jq**
+
+### Storage Backend
+
+The deployment supports two S3-compatible storage backends for the pageserver:
+
+| Backend | Set via | What happens |
+|---|---|---|
+| **AWS S3** (default) | `STORAGE_BACKEND=aws-s3` or unset | Creates S3 bucket, VPC endpoint, IAM policy, IRSA. Pageserver uses AWS S3. |
+| **MinIO** | `STORAGE_BACKEND=minio` | Deploys MinIO as a StatefulSet in the cluster. Skips S3/VPC/IAM/IRSA. Pageserver uses MinIO via `endpoint` config. |
+
+Set `STORAGE_BACKEND` before running `03-create-aws-infra.sh`:
+
+```bash
+export STORAGE_BACKEND=minio    # or aws-s3 (default)
+./03-create-aws-infra.sh
+```
+
+MinIO mode is useful for non-AWS environments, local testing, or avoiding S3 costs. See [Verification & Debugging](#verification--debugging) for MinIO-specific checks.
 
 ### AWS Credentials
 
@@ -423,6 +444,7 @@ All manifests use `PLACEHOLDER_ECR_REGISTRY` and `PLACEHOLDER_S3_BUCKET` which a
 
 1. **Namespace** (`neon`)
 2. **StorageClass** (`gp3-encrypted`)
+2b. **MinIO** (optional) — StatefulSet + Secret + Service (only when `STORAGE_BACKEND=minio`)
 3. **CNPG Operator** — CloudNativePG controller-manager (installed from upstream release)
 4. **CNPG PostgreSQL Cluster** — 3-instance HA Postgres for storage controller metadata
 5. **Storage Controller** — Deployment (1 replica) + ClusterIP Service
@@ -457,6 +479,7 @@ storage-controller-pg-cluster-rw.neon.svc.cluster.local:5432
 storage-broker.neon.svc.cluster.local:50051
 safekeeper-{0,1,2}.safekeeper.neon.svc.cluster.local:5454
 pageserver-{0,1}.pageserver.neon.svc.cluster.local:6400
+minio.neon.svc.cluster.local:9000          # only when STORAGE_BACKEND=minio
 ```
 
 ---
@@ -538,6 +561,15 @@ kubectl get sa pageserver-sa -n neon -o yaml
 **Safekeeper quorum issues:** All 3 safekeepers must be running. Check broker connectivity:
 ```bash
 kubectl logs -l app=safekeeper -n neon | grep -i error
+```
+
+### MinIO Backend (when `STORAGE_BACKEND=minio`)
+
+```bash
+kubectl get pods -n neon                          # Should see minio-0 pod
+kubectl port-forward -n neon svc/minio 9001:9001  # MinIO console at localhost:9001
+kubectl logs -f pageserver-0 -n neon              # Should show S3 endpoint = minio:9000
+kubectl exec -n neon minio-0 -- ls /data/neon-pageserver/  # Verify data lands in MinIO
 ```
 
 ### Test Docker Images Locally

@@ -29,7 +29,8 @@
 | Safekeeper       | 3        | 250m    | 1         | 512Mi   | 2Gi       | 10Gi gp3   | Paxos quorum (minimum 3)     |
 | Pageserver       | 2        | 500m    | 2         | 1Gi     | 4Gi       | 20Gi gp3   | 1GB page cache, S3 backend   |
 | Proxy            | 1        | 500m    | 2         | 512Mi   | 2Gi       | —          | LoadBalancer service          |
-| **Totals (req)** | **11**   | **3.25**| —         | **5.25 GB** | —     | **76Gi**   | +1 compute on demand         |
+| MinIO (optional) | 1        | 250m    | 1         | 256Mi   | 512Mi     | 20Gi gp3   | S3-compatible store (replaces AWS S3) |
+| **Totals (req)** | **11**   | **3.25**| —         | **5.25 GB** | —     | **76Gi**   | +1 compute on demand, +MinIO if selected |
 
 ### Fit Check
 

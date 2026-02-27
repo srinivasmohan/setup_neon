@@ -20,11 +20,21 @@ export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-west-2}"
 # shellcheck source=/dev/null
 source "${ENV_FILE}"
 
+# Storage backend: "aws-s3" (default) or "minio"
+STORAGE_BACKEND="${STORAGE_BACKEND:-aws-s3}"
+
 [[ -n "${ECR_REGISTRY:-}" ]]   || die "ECR_REGISTRY not set in .env"
-[[ -n "${S3_BUCKET:-}" ]]      || die "S3_BUCKET not set in .env"
 [[ -n "${CLUSTER_NAME:-}" ]]   || die "CLUSTER_NAME not set in .env"
 [[ -n "${REGION:-}" ]]         || die "REGION not set in .env"
-[[ -n "${IAM_POLICY_ARN:-}" ]] || die "IAM_POLICY_ARN not set in .env"
+
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    [[ -n "${S3_BUCKET:-}" ]]      || die "S3_BUCKET not set in .env"
+    [[ -n "${IAM_POLICY_ARN:-}" ]] || die "IAM_POLICY_ARN not set in .env"
+else
+    S3_BUCKET="${S3_BUCKET:-neon-pageserver}"
+fi
+
+log "Storage backend: ${STORAGE_BACKEND}"
 
 # ── Ensure kubeconfig is current ─────────────────────────────────────────────
 log "Updating kubeconfig for cluster '${CLUSTER_NAME}'..."
@@ -33,9 +43,16 @@ aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${REGION}"
 # ── Helper: apply a manifest with placeholder substitution ────────────────────
 apply_manifest() {
     local file="$1"
+    local extra_sed=()
+    if [[ "${STORAGE_BACKEND}" == "minio" ]]; then
+        extra_sed=(-e 's|PLACEHOLDER_REMOTE_STORAGE_EXTRA|endpoint = "http://minio.neon.svc.cluster.local:9000"|')
+    else
+        extra_sed=(-e '/PLACEHOLDER_REMOTE_STORAGE_EXTRA/d')
+    fi
     sed \
         -e "s|PLACEHOLDER_ECR_REGISTRY|${ECR_REGISTRY}|g" \
         -e "s|PLACEHOLDER_S3_BUCKET|${S3_BUCKET}|g" \
+        "${extra_sed[@]}" \
         "${file}" | kubectl apply -f -
 }
 
@@ -46,6 +63,22 @@ kubectl apply -f "${SCRIPT_DIR}/manifests/namespace.yaml"
 # ── 2. Storage classes ────────────────────────────────────────────────────────
 log "Applying storage classes..."
 kubectl apply -f "${SCRIPT_DIR}/manifests/storage-classes.yaml"
+
+# ── 2b. MinIO (if STORAGE_BACKEND=minio) ─────────────────────────────────────
+if [[ "${STORAGE_BACKEND}" == "minio" ]]; then
+    log "Deploying MinIO..."
+    kubectl apply -f "${SCRIPT_DIR}/manifests/minio/statefulset.yaml"
+
+    log "Waiting for MinIO to be ready..."
+    kubectl rollout status statefulset/minio -n neon --timeout=120s
+
+    log "Creating MinIO bucket '${S3_BUCKET}'..."
+    kubectl run minio-init --rm --restart=Never -i \
+        --image=minio/mc --namespace=neon -- \
+        sh -c "mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/${S3_BUCKET}" \
+        || warn "MinIO bucket creation returned an error (may already exist)"
+    log "MinIO ready."
+fi
 
 # ── 3. CNPG Operator ────────────────────────────────────────────────────────
 CNPG_VERSION="1.25.1"
@@ -104,13 +137,17 @@ kubectl rollout status statefulset/safekeeper -n neon --timeout=300s
 # ── 8. Pageserver ────────────────────────────────────────────────────────────
 log "Deploying pageserver (2 replicas)..."
 
-# Patch the IRSA annotation onto the ServiceAccount
-# The manifest defines the SA without the annotation; we add it here from .env
-IRSA_ROLE_ARN=$(kubectl get sa pageserver-sa -n neon -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}' 2>/dev/null || echo "")
-if [[ -z "${IRSA_ROLE_ARN}" ]]; then
-    # The SA was already created by eksctl in 02-create-aws-infra.sh with the correct annotation.
-    # Just apply the rest of the manifest (ConfigMap, StatefulSet, Service) — skip SA recreation.
-    log "ServiceAccount pageserver-sa managed by eksctl; applying remaining resources..."
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    # Patch the IRSA annotation onto the ServiceAccount
+    # The manifest defines the SA without the annotation; we add it here from .env
+    IRSA_ROLE_ARN=$(kubectl get sa pageserver-sa -n neon -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}' 2>/dev/null || echo "")
+    if [[ -z "${IRSA_ROLE_ARN}" ]]; then
+        # The SA was already created by eksctl in 02-create-aws-infra.sh with the correct annotation.
+        # Just apply the rest of the manifest (ConfigMap, StatefulSet, Service) — skip SA recreation.
+        log "ServiceAccount pageserver-sa managed by eksctl; applying remaining resources..."
+    fi
+else
+    log "MinIO mode — pageserver gets S3 credentials from minio-credentials Secret."
 fi
 apply_manifest "${SCRIPT_DIR}/manifests/pageserver/statefulset.yaml"
 

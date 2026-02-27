@@ -31,6 +31,7 @@ data:
     bucket_name = "PLACEHOLDER_S3_BUCKET"
     bucket_region = "us-west-2"
     prefix_in_bucket = "pageserver/"
+    PLACEHOLDER_REMOTE_STORAGE_EXTRA
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -71,6 +72,10 @@ spec:
               cp /etc/pageserver/pageserver.toml /data/pageserver.toml
               echo "id = ${PS_ID}" > /data/identity.toml
               exec pageserver -D /data
+          envFrom:
+            - secretRef:
+                name: minio-credentials
+                optional: true
           env:
             - name: NEON_REMOTE_STORAGE_S3_BUCKET
               value: "PLACEHOLDER_S3_BUCKET"

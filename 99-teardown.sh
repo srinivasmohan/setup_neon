@@ -30,18 +30,24 @@ VPC_ENDPOINT_ID="${VPC_ENDPOINT_ID:-}"
 IAM_POLICY_ARN="${IAM_POLICY_ARN:-}"
 ECR_REGISTRY="${ECR_REGISTRY:-}"
 ACCOUNT_ID="${ACCOUNT_ID:-}"
+STORAGE_BACKEND="${STORAGE_BACKEND:-aws-s3}"
 ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker" "neon/storage-controller" "neon/compute")
 
 # ── Confirmation ──────────────────────────────────────────────────────────────
 echo ""
 echo "!! TEARDOWN — This will PERMANENTLY DELETE the following AWS resources !!"
 echo ""
-echo "  EKS Cluster:    ${CLUSTER_NAME}"
-echo "  S3 Bucket:      ${S3_BUCKET}  (all objects force-deleted)"
-echo "  VPC Endpoint:   ${VPC_ENDPOINT_ID:-<not set>}"
-echo "  IAM Policy:     ${IAM_POLICY_ARN:-<not set>}"
-echo "  ECR Repos:      ${ECR_REPOS[*]}"
-echo "  Region:         ${REGION}"
+echo "  Storage Backend: ${STORAGE_BACKEND}"
+echo "  EKS Cluster:     ${CLUSTER_NAME}"
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    echo "  S3 Bucket:       ${S3_BUCKET}  (all objects force-deleted)"
+    echo "  VPC Endpoint:    ${VPC_ENDPOINT_ID:-<not set>}"
+    echo "  IAM Policy:      ${IAM_POLICY_ARN:-<not set>}"
+else
+    echo "  MinIO:           destroyed with namespace"
+fi
+echo "  ECR Repos:       ${ECR_REPOS[*]}"
+echo "  Region:          ${REGION}"
 echo ""
 read -rp "Type 'yes' to confirm destruction: " CONFIRM
 if [[ "${CONFIRM}" != "yes" ]]; then
@@ -72,31 +78,39 @@ else
     log "CNPG operator not found — skipping."
 fi
 
-# ── 2. Delete IRSA service account ───────────────────────────────────────────
-log "Step 2/8: Deleting IRSA service account..."
-if eksctl get iamserviceaccount --cluster "${CLUSTER_NAME}" --region "${REGION}" --namespace neon --name pageserver-sa &>/dev/null 2>&1; then
-    eksctl delete iamserviceaccount \
-        --cluster "${CLUSTER_NAME}" \
-        --region "${REGION}" \
-        --namespace neon \
-        --name pageserver-sa \
-        || warn "IRSA deletion returned an error (may already be gone)."
-    log "IRSA service account deleted."
-else
-    log "IRSA service account not found — skipping."
-fi
-
-# ── 3. Delete VPC Endpoint ───────────────────────────────────────────────────
-log "Step 3/8: Deleting VPC endpoint..."
-if [[ -n "${VPC_ENDPOINT_ID}" ]]; then
-    if aws ec2 describe-vpc-endpoints --vpc-endpoint-ids "${VPC_ENDPOINT_ID}" --region "${REGION}" &>/dev/null; then
-        aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "${VPC_ENDPOINT_ID}" --region "${REGION}"
-        log "VPC endpoint ${VPC_ENDPOINT_ID} deleted."
+# ── 2. Delete IRSA service account (aws-s3 only) ────────────────────────────
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    log "Step 2/8: Deleting IRSA service account..."
+    if eksctl get iamserviceaccount --cluster "${CLUSTER_NAME}" --region "${REGION}" --namespace neon --name pageserver-sa &>/dev/null 2>&1; then
+        eksctl delete iamserviceaccount \
+            --cluster "${CLUSTER_NAME}" \
+            --region "${REGION}" \
+            --namespace neon \
+            --name pageserver-sa \
+            || warn "IRSA deletion returned an error (may already be gone)."
+        log "IRSA service account deleted."
     else
-        log "VPC endpoint ${VPC_ENDPOINT_ID} not found — skipping."
+        log "IRSA service account not found — skipping."
     fi
 else
-    log "No VPC_ENDPOINT_ID in .env — skipping."
+    log "Step 2/8: MinIO mode — no IRSA to delete."
+fi
+
+# ── 3. Delete VPC Endpoint (aws-s3 only) ─────────────────────────────────────
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    log "Step 3/8: Deleting VPC endpoint..."
+    if [[ -n "${VPC_ENDPOINT_ID}" ]]; then
+        if aws ec2 describe-vpc-endpoints --vpc-endpoint-ids "${VPC_ENDPOINT_ID}" --region "${REGION}" &>/dev/null; then
+            aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "${VPC_ENDPOINT_ID}" --region "${REGION}"
+            log "VPC endpoint ${VPC_ENDPOINT_ID} deleted."
+        else
+            log "VPC endpoint ${VPC_ENDPOINT_ID} not found — skipping."
+        fi
+    else
+        log "No VPC_ENDPOINT_ID in .env — skipping."
+    fi
+else
+    log "Step 3/8: MinIO mode — no VPC endpoint to delete."
 fi
 
 # ── 4. Delete EKS Cluster ───────────────────────────────────────────────────
@@ -119,66 +133,74 @@ for repo in "${ECR_REPOS[@]}"; do
     fi
 done
 
-# ── 6. Delete S3 Bucket (force empty first) ──────────────────────────────────
-log "Step 6/8: Deleting S3 bucket '${S3_BUCKET}'..."
-if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
-    log "  Emptying bucket (all versions + delete markers)..."
+# ── 6. Delete S3 Bucket (aws-s3 only, force empty first) ─────────────────────
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    log "Step 6/8: Deleting S3 bucket '${S3_BUCKET}'..."
+    if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
+        log "  Emptying bucket (all versions + delete markers)..."
 
-    # Delete all object versions
-    aws s3api list-object-versions \
-        --bucket "${S3_BUCKET}" \
-        --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
-        --output json 2>/dev/null | \
-    jq -c 'select(.Objects != null) | {Objects: .Objects, Quiet: true}' | \
-    while IFS= read -r batch; do
-        [[ "${batch}" == "null" || -z "${batch}" ]] && continue
-        aws s3api delete-objects --bucket "${S3_BUCKET}" --delete "${batch}" >/dev/null 2>&1 || true
-    done
-
-    # Delete all delete markers
-    aws s3api list-object-versions \
-        --bucket "${S3_BUCKET}" \
-        --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
-        --output json 2>/dev/null | \
-    jq -c 'select(.Objects != null) | {Objects: .Objects, Quiet: true}' | \
-    while IFS= read -r batch; do
-        [[ "${batch}" == "null" || -z "${batch}" ]] && continue
-        aws s3api delete-objects --bucket "${S3_BUCKET}" --delete "${batch}" >/dev/null 2>&1 || true
-    done
-
-    # Delete the bucket itself
-    aws s3api delete-bucket --bucket "${S3_BUCKET}" --region "${REGION}"
-    log "  S3 bucket deleted."
-else
-    log "S3 bucket '${S3_BUCKET}' not found — skipping."
-fi
-
-# ── 7. Delete IAM Policy ─────────────────────────────────────────────────────
-log "Step 7/8: Deleting IAM policy..."
-if [[ -n "${IAM_POLICY_ARN}" ]]; then
-    if aws iam get-policy --policy-arn "${IAM_POLICY_ARN}" &>/dev/null; then
-        # Detach from all roles first
-        ATTACHED_ROLES=$(aws iam list-entities-for-policy --policy-arn "${IAM_POLICY_ARN}" \
-            --query "PolicyRoles[].RoleName" --output text 2>/dev/null || echo "")
-        for role in ${ATTACHED_ROLES}; do
-            log "  Detaching policy from role: ${role}"
-            aws iam detach-role-policy --role-name "${role}" --policy-arn "${IAM_POLICY_ARN}" || true
+        # Delete all object versions
+        aws s3api list-object-versions \
+            --bucket "${S3_BUCKET}" \
+            --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' \
+            --output json 2>/dev/null | \
+        jq -c 'select(.Objects != null) | {Objects: .Objects, Quiet: true}' | \
+        while IFS= read -r batch; do
+            [[ "${batch}" == "null" || -z "${batch}" ]] && continue
+            aws s3api delete-objects --bucket "${S3_BUCKET}" --delete "${batch}" >/dev/null 2>&1 || true
         done
 
-        # Delete non-default policy versions
-        VERSIONS=$(aws iam list-policy-versions --policy-arn "${IAM_POLICY_ARN}" \
-            --query "Versions[?IsDefaultVersion==\`false\`].VersionId" --output text 2>/dev/null || echo "")
-        for ver in ${VERSIONS}; do
-            aws iam delete-policy-version --policy-arn "${IAM_POLICY_ARN}" --version-id "${ver}" || true
+        # Delete all delete markers
+        aws s3api list-object-versions \
+            --bucket "${S3_BUCKET}" \
+            --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' \
+            --output json 2>/dev/null | \
+        jq -c 'select(.Objects != null) | {Objects: .Objects, Quiet: true}' | \
+        while IFS= read -r batch; do
+            [[ "${batch}" == "null" || -z "${batch}" ]] && continue
+            aws s3api delete-objects --bucket "${S3_BUCKET}" --delete "${batch}" >/dev/null 2>&1 || true
         done
 
-        aws iam delete-policy --policy-arn "${IAM_POLICY_ARN}"
-        log "  IAM policy deleted."
+        # Delete the bucket itself
+        aws s3api delete-bucket --bucket "${S3_BUCKET}" --region "${REGION}"
+        log "  S3 bucket deleted."
     else
-        log "IAM policy not found — skipping."
+        log "S3 bucket '${S3_BUCKET}' not found — skipping."
     fi
 else
-    log "No IAM_POLICY_ARN in .env — skipping."
+    log "Step 6/8: MinIO mode — S3 bucket deleted with namespace (step 1)."
+fi
+
+# ── 7. Delete IAM Policy (aws-s3 only) ──────────────────────────────────────
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    log "Step 7/8: Deleting IAM policy..."
+    if [[ -n "${IAM_POLICY_ARN}" ]]; then
+        if aws iam get-policy --policy-arn "${IAM_POLICY_ARN}" &>/dev/null; then
+            # Detach from all roles first
+            ATTACHED_ROLES=$(aws iam list-entities-for-policy --policy-arn "${IAM_POLICY_ARN}" \
+                --query "PolicyRoles[].RoleName" --output text 2>/dev/null || echo "")
+            for role in ${ATTACHED_ROLES}; do
+                log "  Detaching policy from role: ${role}"
+                aws iam detach-role-policy --role-name "${role}" --policy-arn "${IAM_POLICY_ARN}" || true
+            done
+
+            # Delete non-default policy versions
+            VERSIONS=$(aws iam list-policy-versions --policy-arn "${IAM_POLICY_ARN}" \
+                --query "Versions[?IsDefaultVersion==\`false\`].VersionId" --output text 2>/dev/null || echo "")
+            for ver in ${VERSIONS}; do
+                aws iam delete-policy-version --policy-arn "${IAM_POLICY_ARN}" --version-id "${ver}" || true
+            done
+
+            aws iam delete-policy --policy-arn "${IAM_POLICY_ARN}"
+            log "  IAM policy deleted."
+        else
+            log "IAM policy not found — skipping."
+        fi
+    else
+        log "No IAM_POLICY_ARN in .env — skipping."
+    fi
+else
+    log "Step 7/8: MinIO mode — no IAM policy to delete."
 fi
 
 # ── Cleanup .env ──────────────────────────────────────────────────────────────

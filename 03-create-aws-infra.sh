@@ -23,10 +23,19 @@ log "AWS Account: ${ACCOUNT_ID}  Region: ${AWS_DEFAULT_REGION}"
 # ── Constants ─────────────────────────────────────────────────────────────────
 PREFIX="smohan-neon1"
 CLUSTER_NAME="${PREFIX}-cluster"
-S3_BUCKET="${PREFIX}-pageserver-data"
 REGION="${AWS_DEFAULT_REGION}"
 IAM_POLICY_NAME="${PREFIX}-pageserver-s3"
 ECR_REPOS=("neon/pageserver" "neon/safekeeper" "neon/proxy" "neon/storage-broker" "neon/storage-controller" "neon/compute")
+
+# Storage backend: "aws-s3" (default) or "minio"
+STORAGE_BACKEND="${STORAGE_BACKEND:-aws-s3}"
+if [[ "${STORAGE_BACKEND}" == "minio" ]]; then
+    S3_BUCKET="neon-pageserver"
+    log "Storage backend: MinIO — S3 bucket/VPC endpoint/IAM/IRSA will be skipped."
+else
+    S3_BUCKET="${PREFIX}-pageserver-data"
+    STORAGE_BACKEND="aws-s3"   # normalise
+fi
 
 # ── Helper: write/update .env ─────────────────────────────────────────────────
 write_env() {
@@ -40,11 +49,12 @@ write_env() {
 
 # Initialise .env
 touch "${ENV_FILE}"
-write_env "PREFIX"       "${PREFIX}"
-write_env "REGION"       "${REGION}"
-write_env "ACCOUNT_ID"   "${ACCOUNT_ID}"
-write_env "CLUSTER_NAME" "${CLUSTER_NAME}"
-write_env "S3_BUCKET"    "${S3_BUCKET}"
+write_env "PREFIX"           "${PREFIX}"
+write_env "REGION"           "${REGION}"
+write_env "ACCOUNT_ID"       "${ACCOUNT_ID}"
+write_env "CLUSTER_NAME"     "${CLUSTER_NAME}"
+write_env "S3_BUCKET"        "${S3_BUCKET}"
+write_env "STORAGE_BACKEND"  "${STORAGE_BACKEND}"
 
 # ── 1. EKS Cluster ───────────────────────────────────────────────────────────
 if aws eks describe-cluster --name "${CLUSTER_NAME}" --region "${REGION}" &>/dev/null; then
@@ -57,6 +67,9 @@ fi
 
 # Update kubeconfig
 aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${REGION}"
+
+# ── 2–5. S3 / VPC Endpoint / IAM / IRSA (aws-s3 only) ────────────────────────
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
 
 # ── 2. S3 Bucket ─────────────────────────────────────────────────────────────
 if aws s3api head-bucket --bucket "${S3_BUCKET}" 2>/dev/null; then
@@ -184,6 +197,10 @@ else
     log "IRSA service account created."
 fi
 
+else
+    log "Storage backend is MinIO — skipping S3 bucket, VPC endpoint, IAM policy, and IRSA."
+fi  # end STORAGE_BACKEND == aws-s3
+
 # ── 6. ECR Repositories ──────────────────────────────────────────────────────
 ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 write_env "ECR_REGISTRY" "${ECR_REGISTRY}"
@@ -207,12 +224,17 @@ kubectl apply -f "${SCRIPT_DIR}/manifests/storage-classes.yaml"
 # ── Summary ───────────────────────────────────────────────────────────────────
 log ""
 log "AWS infrastructure ready. Resources:"
-log "  EKS Cluster:    ${CLUSTER_NAME}"
-log "  S3 Bucket:      ${S3_BUCKET}"
-log "  VPC Endpoint:   ${VPC_ENDPOINT_ID}"
-log "  IAM Policy:     ${POLICY_ARN}"
-log "  ECR Registry:   ${ECR_REGISTRY}"
-log "  OIDC Provider:  ${OIDC_PROVIDER}"
+log "  Storage Backend: ${STORAGE_BACKEND}"
+log "  EKS Cluster:     ${CLUSTER_NAME}"
+log "  ECR Registry:    ${ECR_REGISTRY}"
+if [[ "${STORAGE_BACKEND}" == "aws-s3" ]]; then
+    log "  S3 Bucket:       ${S3_BUCKET}"
+    log "  VPC Endpoint:    ${VPC_ENDPOINT_ID}"
+    log "  IAM Policy:      ${POLICY_ARN}"
+    log "  OIDC Provider:   ${OIDC_PROVIDER}"
+else
+    log "  MinIO Bucket:    ${S3_BUCKET} (created at deploy time)"
+fi
 log ""
 log "State saved to ${ENV_FILE}"
 log "Done."
