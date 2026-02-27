@@ -622,6 +622,12 @@ Using [kube-rs](https://github.com/kube-rs/kube):
 
 - **`mold` not in `00-prerequisites.sh`**: Should add `sudo dnf install -y mold`.
 - **Hardcoded neon source path**: `01-build-neon.sh` and `02-build-images.sh` hardcode `/home/srinivas/SourceCode/neon`.
+- **Pageserver is a per-tenant SPOF**:
+  - Each tenant is attached to a single pageserver (`Attached(0)` default — no secondary).
+  - If that pageserver goes down, the storage controller can re-attach the tenant to another node, but there's a gap until migration completes.
+  - Fix: create tenants with `"placement_policy": {"Attached": 1}` to maintain a warm secondary.
+  - Even with secondaries, the compute's `neon.pageserver_connstring` is a static hostname baked in at spin-up — a pageserver failover requires recreating the compute pod.
+  - In managed Neon, the proxy handles re-routing transparently; in our setup it's manual.
 - **Proxy configuration**: Currently starts with minimal args — needs auth configuration and compute routing for production use.
 - **Monitoring**: No Prometheus/Grafana setup.
 - **TLS**: No TLS termination configured.
